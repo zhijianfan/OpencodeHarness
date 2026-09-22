@@ -1,0 +1,1451 @@
+import { beforeAll, beforeEach, describe, expect, mock, test } from "bun:test"
+import { createStore } from "solid-js/store"
+import type { Prompt, PromptStore } from "@/context/prompt"
+import { createPromptState } from "@/context/prompt-state"
+import type { ModelSelection } from "@/context/local"
+import {
+  createContextAttachmentStore,
+  type ContextAttachmentDraft,
+  type ContextAttachmentStore,
+} from "@/context/ctxpack/attachment-store"
+import { Worktree as WorktreeState } from "@/utils/worktree"
+import { ServerScope } from "@/utils/server-scope"
+
+let createPromptSubmit: typeof import("./submit").createPromptSubmit
+let sendFollowupDraft: typeof import("./submit").sendFollowupDraft
+
+const createdClients: string[] = []
+const createdSessions: string[] = []
+const sessionCreateInputs: Array<{
+  agent?: string
+  model?: { id: string; providerID: string; variant?: string }
+  location?: { directory: string }
+}> = []
+const enabledAutoAccept: Array<{ server: string; sessionID: string; directory: string }> = []
+const optimistic: Array<{
+  directory?: string
+  sessionID?: string
+  message: {
+    agent: string
+    model: { providerID: string; modelID: string }
+    variant?: string
+  }
+}> = []
+const optimisticSeeded: boolean[] = []
+const storedSessions: Record<string, Array<{ id: string; title?: string }>> = {}
+const promoted: Array<{ directory: string; sessionID: string }> = []
+const sentShell: Array<{ sessionID: string; id?: string; command: string }> = []
+const syncedDirectories: string[] = []
+const promotedDrafts: Array<{ draftID: string; server: string; sessionId: string }> = []
+const sentPrompts: string[] = []
+const promptInputs: unknown[] = []
+const sentCommands: unknown[] = []
+const commands: Array<{ name: string }> = []
+let serverSessionSyncs = 0
+let failPrompt = false
+let onPrompt: (() => Promise<void>) | undefined
+let failInterrupt = false
+const interruptCalls: string[] = []
+const canonicalRequests: string[] = []
+const toastCalls: Array<{ title?: string; description?: string }> = []
+
+let params: { id?: string } = {}
+let search: { draftId?: string } = {}
+let selected = "/repo/worktree-a"
+let variant: string | undefined
+let permissionServer = "server-a"
+let createSessionGate: Promise<void> | undefined
+
+let promptValue: Prompt = [{ type: "text", content: "ls", start: 0, end: 2 }]
+const [promptStore, setPromptStore] = createStore<PromptStore>({
+  prompt: promptValue,
+  cursor: 0,
+  context: { items: [] },
+})
+const prompt = {
+  store: [() => promptStore, setPromptStore] as [() => PromptStore, typeof setPromptStore],
+  ready: Object.assign(() => true, { promise: Promise.resolve(true) }),
+  current: () => promptValue,
+  cursor: () => 0,
+  dirty: () => true,
+  model: {
+    current: () => undefined,
+    set: () => undefined,
+  },
+  reset: () => undefined,
+  set: () => undefined,
+  context: {
+    add: () => undefined,
+    remove: () => undefined,
+    removeComment: () => undefined,
+    updateComment: () => undefined,
+    replaceComments: () => undefined,
+    items: () => [],
+  },
+  capture: () => prompt,
+}
+
+const clientFor = (directory: string) => {
+  createdClients.push(directory)
+  return {
+    api: {
+      session: {
+        create: async (input: (typeof sessionCreateInputs)[number]) => {
+          await createSessionGate
+          const location = input.location?.directory ?? directory
+          createdSessions.push(location)
+          sessionCreateInputs.push(input)
+          return {
+            id: `session-${createdSessions.length}`,
+            projectID: "project",
+            agent: input.agent,
+            model: input.model,
+            cost: 0,
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            time: { created: 1, updated: 1 },
+            title: `New session ${createdSessions.length}`,
+            location: { directory: location },
+          }
+        },
+        prompt: async (input: unknown) => {
+          sentPrompts.push(directory)
+          promptInputs.push(input)
+          await onPrompt?.()
+          if (failPrompt) throw new Error("admission-failed")
+          return { data: undefined }
+        },
+        interrupt: async (input: { sessionID: string }) => {
+          interruptCalls.push(input.sessionID)
+          if (failInterrupt) throw new Error("interrupt-invalid")
+        },
+        command: async (input: unknown) => {
+          sentCommands.push(input)
+        },
+        shell: async (input: { sessionID: string; id?: string; command: string }) => {
+          sentShell.push(input)
+        },
+      },
+    },
+    session: {
+      command: async () => ({ data: undefined }),
+      abort: async () => ({ data: undefined }),
+    },
+    worktree: {
+      create: async () => ({ data: { directory: `${directory}/new` } }),
+    },
+  }
+}
+
+beforeAll(async () => {
+  const rootClient = clientFor("/repo/main")
+
+  mock.module("@solidjs/router", () => ({
+    useNavigate: () => () => undefined,
+    useParams: () => params,
+    useLocation: () => ({}),
+    useSearchParams: () => [search, () => undefined],
+  }))
+
+  mock.module("@opencode-ai/sdk/v2/client", () => ({
+    createOpencodeClient: (input: { directory: string }) => {
+      createdClients.push(input.directory)
+      return clientFor(input.directory)
+    },
+  }))
+
+  mock.module("@opencode-ai/ui/toast", () => ({
+    Toast: { Region: () => null },
+    showToast: () => 0,
+    toaster: { show: () => 0, dismiss: () => 0 },
+  }))
+
+  mock.module("@/utils/toast", () => ({
+    showToast: (options: { title?: string; description?: string } | string) => {
+      toastCalls.push(typeof options === "string" ? { title: options } : options)
+    },
+    ToastRegion: () => null,
+    dismissToast: () => 0,
+    setV2Toast: () => undefined,
+  }))
+
+  mock.module("@opencode-ai/core/util/encode", () => ({
+    base64Encode: (value: string) => value,
+  }))
+
+  mock.module("@/context/local", () => ({
+    useLocal: () => ({
+      model: {
+        current: () => ({ id: "model", provider: { id: "provider" } }),
+        variant: { current: () => variant },
+      },
+      agent: {
+        current: () => ({ name: "agent" }),
+      },
+      session: {
+        promote(directory: string, sessionID: string) {
+          promoted.push({ directory, sessionID })
+        },
+      },
+    }),
+  }))
+
+  mock.module("@/context/permission", () => {
+    const state = (server: string) => ({
+      enableAutoAccept(sessionID: string, directory: string) {
+        enabledAutoAccept.push({ server, sessionID, directory })
+      },
+    })
+    return { usePermission: () => ({ currentServerState: () => state(permissionServer) }) }
+  })
+
+  mock.module("@/context/server", () => ({
+    useServer: () => ({ key: "server-key" }),
+  }))
+
+  mock.module("@/context/tabs", () => ({
+    useTabs: () => ({
+      draft: () => ({ server: "project-server" }),
+      promoteDraft: (draftID: string, session: { server: string; sessionId: string }) => {
+        promotedDrafts.push({ draftID, ...session })
+      },
+    }),
+  }))
+
+  mock.module("@/context/prompt", () => ({
+    usePrompt: () => prompt,
+  }))
+
+  mock.module("@/context/layout", () => ({
+    useLayout: () => ({
+      handoff: {
+        setTabs: () => undefined,
+      },
+    }),
+  }))
+
+  mock.module("@/context/sdk", () => ({
+    useSDK: () => {
+      const sdk = {
+        scope: "local",
+        directory: "/repo/main",
+        client: rootClient,
+        api: rootClient.api,
+        currentApi: {
+          session: {
+            ...rootClient.api.session,
+            prompt: (input: Parameters<typeof rootClient.api.session.prompt>[0]) => {
+              canonicalRequests.push("prompt")
+              return rootClient.api.session.prompt(input)
+            },
+            interrupt: (input: { sessionID: string }) => {
+              canonicalRequests.push("interrupt")
+              return rootClient.api.session.interrupt(input)
+            },
+          },
+        },
+        url: "http://localhost:4096",
+        createClient(opts: any) {
+          return clientFor(opts.directory)
+        },
+      }
+      return () => sdk
+    },
+  }))
+
+  mock.module("@/context/sync", () => ({
+    useSync: () => () => ({
+      data: { command: commands },
+      session: {
+        optimistic: {
+          add: (value: {
+            directory?: string
+            sessionID?: string
+            message: { agent: string; model: { providerID: string; modelID: string; variant?: string } }
+          }) => {
+            optimistic.push(value)
+            optimisticSeeded.push(
+              !!value.directory &&
+                !!value.sessionID &&
+                !!storedSessions[value.directory]?.find((item) => item.id === value.sessionID)?.title,
+            )
+          },
+          remove: () => undefined,
+        },
+      },
+      set: () => undefined,
+    }),
+  }))
+
+  mock.module("@/context/server-sync", () => ({
+    useServerSync: () => () => ({
+      session: {
+        remember: () => undefined,
+        set: () => undefined,
+        sync: async () => {
+          serverSessionSyncs++
+        },
+      },
+      child: (directory: string) => {
+        syncedDirectories.push(directory)
+        storedSessions[directory] ??= []
+        return [
+          { session: storedSessions[directory] },
+          (...args: unknown[]) => {
+            if (args[0] !== "session") return
+            const next = args[1]
+            if (typeof next === "function") {
+              storedSessions[directory] = next(storedSessions[directory]) as Array<{ id: string; title?: string }>
+              return
+            }
+            if (Array.isArray(next)) {
+              storedSessions[directory] = next as Array<{ id: string; title?: string }>
+            }
+          },
+        ]
+      },
+    }),
+  }))
+
+  mock.module("@/context/platform", () => ({
+    usePlatform: () => ({
+      fetch: fetch,
+    }),
+  }))
+
+  mock.module("@/context/language", () => ({
+    useLanguage: () => ({
+      t: (key: string) => key,
+    }),
+  }))
+
+  const mod = await import("./submit")
+  createPromptSubmit = mod.createPromptSubmit
+  sendFollowupDraft = mod.sendFollowupDraft
+})
+
+beforeEach(() => {
+  failInterrupt = false
+  interruptCalls.length = 0
+  canonicalRequests.length = 0
+  createdClients.length = 0
+  createdSessions.length = 0
+  sessionCreateInputs.length = 0
+  enabledAutoAccept.length = 0
+  optimistic.length = 0
+  optimisticSeeded.length = 0
+  promoted.length = 0
+  promotedDrafts.length = 0
+  sentPrompts.length = 0
+  promptInputs.length = 0
+  sentCommands.length = 0
+  commands.length = 0
+  promptValue = [{ type: "text", content: "ls", start: 0, end: 2 }]
+  params = {}
+  search = {}
+  sentShell.length = 0
+  syncedDirectories.length = 0
+  selected = "/repo/worktree-a"
+  variant = undefined
+  permissionServer = "server-a"
+  createSessionGate = undefined
+  serverSessionSyncs = 0
+  failPrompt = false
+  onPrompt = undefined
+  toastCalls.length = 0
+  for (const key of Object.keys(storedSessions)) delete storedSessions[key]
+})
+
+let nextAttachmentID = 0
+
+function makeAttachment(overrides: Partial<ContextAttachmentDraft> = {}): ContextAttachmentDraft {
+  nextAttachmentID += 1
+  return {
+    clientAttachmentID: `attachment-${nextAttachmentID}`,
+    kind: "context-capsule",
+    contextCapsuleID: `capsule-${nextAttachmentID}`,
+    source: {
+      kind: "ctxpack",
+      ctxPackID: `pack-${nextAttachmentID}`,
+      contentHash: `hash-${nextAttachmentID}`,
+    },
+    label: `Pack ${nextAttachmentID}`,
+    contentHash: `hash-${nextAttachmentID}`,
+    estimatedTokens: 100,
+    status: "ready",
+    errorCode: null,
+    ...overrides,
+  }
+}
+
+type AttachmentStoreSpy = {
+  store: ContextAttachmentStore
+  cleared: number
+  restored: Array<readonly ContextAttachmentDraft[]>
+}
+
+function createAttachmentStore(initial: ContextAttachmentDraft[] = []): AttachmentStoreSpy {
+  let items: ContextAttachmentDraft[] = [...initial]
+  const spy: AttachmentStoreSpy = {
+    cleared: 0,
+    restored: [],
+    store: {
+      attachments: () => items,
+      addCtxPack: async () => undefined,
+      remove: (clientAttachmentID) => {
+        items = items.filter((item) => item.clientAttachmentID !== clientAttachmentID)
+      },
+      clearAfterAdmission: () => {
+        spy.cleared += 1
+        items = []
+      },
+      restoreAfterFailure: (snapshot) => {
+        spy.restored.push(snapshot)
+        items = [...snapshot]
+      },
+      totalEstimatedTokens: () => items.reduce((sum, item) => sum + item.estimatedTokens, 0),
+      pendingCount: () => 0,
+    },
+  }
+  return spy
+}
+
+function makeSubmitInput(
+  overrides: Partial<Parameters<typeof createPromptSubmit>[0]> = {},
+): Parameters<typeof createPromptSubmit>[0] {
+  return {
+    prompt,
+    info: () => ({ id: "session-1" }),
+    imageAttachments: () => [],
+    commentCount: () => 0,
+    autoAccept: () => false,
+    mode: () => "normal",
+    working: () => false,
+    editor: () => undefined,
+    queueScroll: () => undefined,
+    promptLength: (value: Prompt) =>
+      value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+    addToHistory: () => undefined,
+    resetHistoryNavigation: () => undefined,
+    setMode: () => undefined,
+    setPopover: () => undefined,
+    ...overrides,
+  }
+}
+
+test("pending context materialization blocks send without clearing the draft", async () => {
+  params = { id: "session-1" }
+  const spy = createAttachmentStore()
+  spy.store.pendingCount = () => 1
+  await createPromptSubmit(makeSubmitInput({ contextAttachmentStore: spy.store })).handleSubmit(submitEvent)
+  expect(promptInputs).toEqual([])
+  expect(spy.cleared).toBe(0)
+  expect(promptValue[0]).toMatchObject({ content: "ls" })
+  expect(toastCalls.some((call) => call.title === "prompt.ctxpack.pending")).toBe(true)
+})
+
+const submitEvent = { preventDefault: () => undefined } as unknown as Event
+
+describe("workspace model submission", () => {
+  test("rejects selected skills in direct followup commands without sending", async () => {
+    const api = clientFor("/repo/followup").api.session as unknown as Parameters<typeof sendFollowupDraft>[0]["api"]
+    const serverSync = { session: { set: () => undefined } } as unknown as Parameters<
+      typeof sendFollowupDraft
+    >[0]["serverSync"]
+    const sync = { data: { command: [{ name: "review" }] } } as unknown as Parameters<
+      typeof sendFollowupDraft
+    >[0]["sync"]
+
+    const result = await sendFollowupDraft({
+      api,
+      serverSync,
+      sync,
+      skillCommandRejection: {
+        title: "Skills cannot be used with custom commands",
+        description: "Remove the selected skill or send it as a regular prompt.",
+      },
+      draft: {
+        sessionID: "session-1",
+        sessionDirectory: "/repo/followup",
+        prompt: [
+          { type: "text", content: "/review changes ", start: 0, end: 16 },
+          { type: "skill", name: "brainstorm", content: "@brainstorm", start: 16, end: 27 },
+          {
+            type: "image",
+            id: "image-1",
+            filename: "diagram.png",
+            mime: "image/png",
+            blob: { id: "diagram", url: "data:image/png;base64,QQ==" },
+          },
+        ],
+        context: [],
+        agent: "agent",
+        model: { providerID: "provider", modelID: "model" },
+      },
+    })
+
+    expect(result).toBeFalse()
+    expect(sentCommands).toEqual([])
+    expect(promptInputs).toEqual([])
+    expect(toastCalls).toContainEqual({
+      title: "Skills cannot be used with custom commands",
+      description: "Remove the selected skill or send it as a regular prompt.",
+    })
+  })
+
+  test("rejects selected skills in composer commands without clearing or routing a prompt", async () => {
+    params = { id: "session-1" }
+    commands.push({ name: "review" })
+    const selected: Prompt = [
+      { type: "text", content: "/review existing ", start: 0, end: 17 },
+      { type: "skill", name: "brainstorm", content: "@brainstorm", start: 17, end: 28 },
+    ]
+    promptValue = selected
+    const history: Prompt[] = []
+
+    expect(
+      await createPromptSubmit(
+        makeSubmitInput({
+          addToHistory: (value) => history.push(value),
+        }),
+      ).handleSubmit(submitEvent),
+    ).toBeFalse()
+
+    expect(sentCommands).toEqual([])
+    expect(promptInputs).toEqual([])
+    expect(promptValue).toEqual(selected)
+    expect(history).toEqual([])
+    expect(toastCalls).toContainEqual({
+      title: "prompt.toast.skillCommandUnsupported.title",
+      description: "prompt.toast.skillCommandUnsupported.description",
+    })
+  })
+
+  test("carries selected skill intent through steer, failure restoration, and queue retry", async () => {
+    params = { id: "session-1" }
+    const target = createPromptState()
+    const selected: Prompt = [
+      { type: "skill", name: "review", content: "@review", start: 0, end: 7 },
+      { type: "text", content: " this", start: 7, end: 12 },
+    ]
+    target.set(selected, 12)
+    const submit = createPromptSubmit(makeSubmitInput({ prompt: target }))
+    const instruction =
+      '@review this\nSelected skills: ["review"]\nUse the skill tool to load these selected skills before responding. If a skill is unavailable or permission is denied, explain that instead of claiming it was loaded.'
+
+    failPrompt = true
+    expect(await submit.handleSubmit(submitEvent)).toBeFalse()
+    expect(target.current()).toEqual(selected)
+    expect(promptInputs[0]).toMatchObject({ delivery: "steer", text: instruction })
+
+    failPrompt = false
+    expect(await submit.queueSubmit(submitEvent)).toBeTrue()
+    expect(promptInputs[1]).toMatchObject({ delivery: "queue", text: instruction })
+    expect(
+      (promptInputs as { legacyParts?: { type: string; text?: string }[] }[]).map((request) =>
+        request.legacyParts?.filter((part) => part.type === "text").map((part) => part.text),
+      ),
+    ).toEqual([[instruction], [instruction]])
+  })
+
+  test.each(["model", "variant"])("preserves a Relay draft when its %s changes during preparation", async (change) => {
+    const selection = { id: "model-a", variant: "low" }
+    const gate = Promise.withResolvers<void>()
+    const entered = Promise.withResolvers<void>()
+    const attachments = createAttachmentStore([makeAttachment()])
+    const submit = createPromptSubmit(
+      makeSubmitInput({
+        sessionID: () => "session-1",
+        chatOnly: true,
+        contextAttachmentStore: attachments.store,
+        model: {
+          current: () => ({ id: selection.id, provider: { id: "provider" } }),
+          variant: { current: () => selection.variant },
+        } as unknown as ModelSelection,
+        beforeSubmit: async () => {
+          entered.resolve()
+          await gate.promise
+        },
+      }),
+    )
+    const result = submit.handleSubmit(submitEvent)
+    await entered.promise
+    if (change === "model") selection.id = "model-b"
+    if (change === "variant") selection.variant = "high"
+    gate.resolve()
+    expect(await result).toBe(false)
+    expect(promptInputs).toEqual([])
+    expect(promptValue[0]).toMatchObject({ content: "ls" })
+    expect(attachments.cleared).toBe(0)
+  })
+
+  test.each(["text", "image", "context", "attachment"])(
+    "preserves %s edits made while the workspace refresh is pending",
+    async (change) => {
+      params = { id: "session-1" }
+      const target = createPromptState({ prompt: "Original draft" })
+      const attachments = createAttachmentStore()
+      const gate = Promise.withResolvers<void>()
+      const entered = Promise.withResolvers<void>()
+      const history: Prompt[] = []
+      const submit = createPromptSubmit(
+        makeSubmitInput({
+          prompt: target,
+          imageAttachments: () => target.current().filter((part) => part.type === "image"),
+          contextAttachmentStore: attachments.store,
+          addToHistory: (value) => {
+            history.push(value)
+          },
+          beforeSubmit: async () => {
+            entered.resolve()
+            await gate.promise
+          },
+        }),
+      )
+      const result = submit.handleSubmit(submitEvent)
+      await entered.promise
+      if (change === "text") target.set([{ type: "text", content: "New draft", start: 0, end: 9 }])
+      if (change === "image")
+        target.set([
+          ...target.current(),
+          {
+            type: "image",
+            id: "new-image",
+            filename: "new.png",
+            mime: "image/png",
+            blob: { id: "blob", url: "blob:new" },
+          },
+        ])
+      if (change === "context") {
+        target.store[1]("context", "items", 0, { key: "new", type: "file", path: "new.ts", comment: "New comment" })
+      }
+      if (change === "attachment") attachments.store.restoreAfterFailure([makeAttachment()])
+      const current = JSON.stringify([target.current(), target.context.items(), attachments.store.attachments()])
+      gate.resolve()
+
+      expect(await result).toBe(false)
+      expect(JSON.stringify([target.current(), target.context.items(), attachments.store.attachments()])).toBe(current)
+      expect([...promptInputs, ...optimistic, ...history]).toEqual([])
+      expect(attachments.cleared).toBe(0)
+    },
+  )
+
+  test("ignores a second submission while the shared draft is waiting for refresh", async () => {
+    params = { id: "session-1" }
+    const gate = Promise.withResolvers<void>()
+    const entered = Promise.withResolvers<void>()
+    const preparations: string[] = []
+    const submit = createPromptSubmit(
+      makeSubmitInput({
+        beforeSubmit: async () => {
+          preparations.push("prepare")
+          entered.resolve()
+          await gate.promise
+        },
+      }),
+    )
+    const first = submit.handleSubmit(submitEvent)
+    await entered.promise
+    const second = submit.queueSubmit(submitEvent)
+    gate.resolve()
+
+    expect(await first).toBe(true)
+    expect(await second).toBe(false)
+    expect(preparations).toEqual(["prepare"])
+    expect(promptInputs).toHaveLength(1)
+    expect(promptInputs[0]).toMatchObject({ delivery: "steer" })
+  })
+
+  test("still interrupts an empty working draft while refresh is pending", async () => {
+    params = { id: "session-1" }
+    const target = createPromptState({ prompt: "Original draft" })
+    const gate = Promise.withResolvers<void>()
+    const entered = Promise.withResolvers<void>()
+    const submit = createPromptSubmit(
+      makeSubmitInput({
+        prompt: target,
+        working: () => true,
+        beforeSubmit: async () => {
+          entered.resolve()
+          await gate.promise
+        },
+      }),
+    )
+    const result = submit.handleSubmit(submitEvent)
+    await entered.promise
+    target.reset()
+    expect(await submit.handleSubmit(submitEvent)).toBe(false)
+    expect(interruptCalls).toEqual(["session-1"])
+    gate.resolve()
+    expect(await result).toBe(false)
+    expect(promptInputs).toEqual([])
+  })
+
+  test.each(["steer", "queue", "shell", "command"])(
+    "awaits the workspace refresh before %s side effects",
+    async (action) => {
+      params = { id: "session-1" }
+      if (action === "command") {
+        commands.push({ name: "review" })
+        promptValue = [{ type: "text", content: "/review changes", start: 0, end: 15 }]
+      }
+      const gate = Promise.withResolvers<void>()
+      const entered = Promise.withResolvers<void>()
+      const history: Prompt[] = []
+      const cleared: string[] = []
+      const target = {
+        ...prompt,
+        reset: () => {
+          cleared.push("reset")
+          return undefined
+        },
+      }
+      const submit = createPromptSubmit(
+        makeSubmitInput({
+          prompt: { ...prompt, capture: () => target },
+          mode: () => (action === "shell" ? "shell" : "normal"),
+          addToHistory: (value) => {
+            history.push(value)
+          },
+          beforeSubmit: async () => {
+            entered.resolve()
+            await gate.promise
+          },
+        }),
+      )
+      const result = action === "queue" ? submit.queueSubmit(submitEvent) : submit.handleSubmit(submitEvent)
+      await Promise.race([entered.promise, result])
+
+      expect([...promptInputs, ...sentShell, ...sentCommands, ...optimistic, ...history, ...cleared]).toEqual([])
+      gate.resolve()
+      expect(await result).toBe(true)
+      expect([...promptInputs, ...sentShell, ...sentCommands]).toHaveLength(1)
+      expect(history).toHaveLength(1)
+      expect(cleared).toEqual(["reset"])
+    },
+  )
+
+  test("a failed workspace refresh preserves the draft and reports the existing scheduler error", async () => {
+    params = { id: "session-1" }
+    const draft = promptValue
+    const history: Prompt[] = []
+    let fail = true
+    const target = {
+      ...prompt,
+      reset: () => {
+        promptValue = []
+        return undefined
+      },
+    }
+    const submit = createPromptSubmit(
+      makeSubmitInput({
+        prompt: { ...prompt, capture: () => target },
+        addToHistory: (value) => {
+          history.push(value)
+        },
+        beforeSubmit: async () => {
+          if (fail) throw new Error("main-refresh-failed")
+        },
+      }),
+    )
+
+    expect(await submit.handleSubmit(submitEvent)).toBe(false)
+    expect(target.current()).toBe(draft)
+    expect([...promptInputs, ...optimistic, ...history]).toEqual([])
+    expect(toastCalls.at(-1)?.description).toBe("main-refresh-failed")
+    fail = false
+    expect(await submit.handleSubmit(submitEvent)).toBe(true)
+    expect(promptInputs).toHaveLength(1)
+  })
+
+  test("keeps host agent and model authority for prompts and queued followups", async () => {
+    params = { id: "session-1" }
+    variant = "stale-variant"
+    let bound = { id: "session-1", agent: "master", model: { id: "main-a", providerID: "workspace" } }
+    const submit = createPromptSubmit(makeSubmitInput({ workspaceModels: true, info: () => bound }))
+
+    await submit.handleSubmit(submitEvent)
+    bound = { ...bound, model: { id: "main-b", providerID: "workspace" } }
+    await submit.queueSubmit(submitEvent)
+
+    expect(promptInputs).toHaveLength(2)
+    expect(promptInputs[0]).toMatchObject({ sessionID: "session-1", delivery: "steer" })
+    expect(promptInputs[1]).toMatchObject({ sessionID: "session-1", delivery: "queue" })
+    for (const input of promptInputs) {
+      expect(input).not.toHaveProperty("agent")
+      expect(input).not.toHaveProperty("model")
+      expect(input).not.toHaveProperty("variant")
+    }
+    expect(optimistic.map((item) => item.message)).toMatchObject([
+      { agent: "master", model: { modelID: "main-a", providerID: "workspace" } },
+      { agent: "master", model: { modelID: "main-b", providerID: "workspace" } },
+    ])
+  })
+
+  test("allows the host to resolve a default model without sending a local selection", async () => {
+    params = { id: "session-1" }
+    const submit = createPromptSubmit(
+      makeSubmitInput({
+        workspaceModels: true,
+        info: () => ({ id: "session-1", agent: "master" }),
+      }),
+    )
+
+    await submit.handleSubmit(submitEvent)
+
+    expect(promptInputs).toHaveLength(1)
+    expect(promptInputs[0]).not.toHaveProperty("model")
+    expect(promptInputs[0]).not.toHaveProperty("agent")
+    expect(optimistic[0]?.message.model).toMatchObject({ modelID: "", providerID: "" })
+  })
+
+  test("preserves host configuration for shell and custom commands", async () => {
+    params = { id: "session-1" }
+    const info = () => ({ id: "session-1", agent: "master", model: { id: "main", providerID: "workspace" } })
+    await createPromptSubmit(makeSubmitInput({ workspaceModels: true, info, mode: () => "shell" })).handleSubmit(
+      submitEvent,
+    )
+    commands.push({ name: "review" })
+    promptValue = [{ type: "text", content: "/review changes", start: 0, end: 15 }]
+    await createPromptSubmit(makeSubmitInput({ workspaceModels: true, info })).handleSubmit(submitEvent)
+
+    expect(sentShell).toHaveLength(1)
+    expect(sentCommands).toHaveLength(1)
+    for (const input of [...sentShell, ...sentCommands]) {
+      expect(input).not.toHaveProperty("agent")
+      expect(input).not.toHaveProperty("model")
+    }
+  })
+})
+
+describe("prompt submit message scheduler", () => {
+  test("keeps block chat send and interrupt bound when another session is routed", async () => {
+    params = { id: "other-session" }
+    commands.push({ name: "review" })
+    promptValue = [{ type: "text", content: "/review changes", start: 0, end: 15 }]
+    const submit = createPromptSubmit(
+      makeSubmitInput({
+        sessionID: () => "session-1",
+        chatOnly: true,
+        agent: () => "relay",
+      }),
+    )
+
+    await submit.handleSubmit(submitEvent)
+    await submit.queueSubmit(submitEvent)
+    await submit.abort()
+
+    expect(sentCommands).toHaveLength(0)
+    expect(promptInputs).toMatchObject([
+      { sessionID: "session-1", agent: "relay", text: "/review changes", delivery: "steer" },
+      { sessionID: "session-1", agent: "relay", text: "/review changes", delivery: "queue" },
+    ])
+    expect(interruptCalls).toEqual(["session-1"])
+    expect(createdSessions).toHaveLength(0)
+    expect(canonicalRequests).toEqual(["prompt", "prompt", "interrupt"])
+  })
+
+  test("does not create or interrupt another session while block chat is hydrating", async () => {
+    params = { id: "other-session" }
+    const submit = createPromptSubmit(
+      makeSubmitInput({
+        sessionID: () => undefined,
+        chatOnly: true,
+        info: () => undefined,
+      }),
+    )
+
+    await submit.handleSubmit(submitEvent)
+    await submit.abort()
+
+    expect(promptInputs).toHaveLength(0)
+    expect(createdSessions).toHaveLength(0)
+    expect(interruptCalls).toHaveLength(0)
+  })
+
+  test("forwards interrupt to the authoritative session endpoint", async () => {
+    params = { id: "session-1" }
+    const submit = createPromptSubmit(makeSubmitInput())
+
+    expect(await submit.abort()).toBe(true)
+    expect(interruptCalls).toEqual(["session-1"])
+  })
+
+  test("reports the server response when interrupt is rejected", async () => {
+    params = { id: "session-1" }
+    failInterrupt = true
+    const submit = createPromptSubmit(makeSubmitInput())
+
+    expect(await submit.abort()).toBe(false)
+    expect(interruptCalls).toEqual(["session-1"])
+    expect(toastCalls.at(-1)?.description).toBe("interrupt-invalid")
+  })
+
+  test("cancels a locally pending send without interrupting the server", async () => {
+    params = { id: "session-1" }
+    WorktreeState.pending(ServerScope.local, "/repo/main")
+    const submit = createPromptSubmit(makeSubmitInput())
+    const sending = submit.handleSubmit(submitEvent)
+
+    while (optimistic.length === 0) await Promise.resolve()
+    expect(await submit.abort()).toBe(true)
+    expect(await sending).toBe(false)
+    expect(interruptCalls).toHaveLength(0)
+    WorktreeState.ready(ServerScope.local, "/repo/main")
+  })
+})
+
+describe("prompt submit worktree selection", () => {
+  test("reads the latest worktree accessor value per submit", async () => {
+    const submit = createPromptSubmit({
+      prompt,
+      info: () => undefined,
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "shell",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+      newSessionWorktree: () => selected,
+      onNewSessionWorktreeReset: () => undefined,
+      onSubmit: () => undefined,
+    })
+
+    const event = { preventDefault: () => undefined } as unknown as Event
+
+    await submit.handleSubmit(event)
+    selected = "/repo/worktree-b"
+    await submit.handleSubmit(event)
+
+    expect(createdClients).toEqual(["/repo/worktree-a", "/repo/worktree-b"])
+    expect(createdSessions).toEqual(["/repo/worktree-a", "/repo/worktree-b"])
+    expect(sessionCreateInputs).toEqual([
+      {
+        agent: "agent",
+        model: { id: "model", providerID: "provider", variant: undefined },
+        location: { directory: "/repo/worktree-a" },
+      },
+      {
+        agent: "agent",
+        model: { id: "model", providerID: "provider", variant: undefined },
+        location: { directory: "/repo/worktree-b" },
+      },
+    ])
+    expect(sentShell).toEqual([
+      expect.objectContaining({ sessionID: "session-1", id: expect.stringMatching(/^evt_/), command: "ls" }),
+      expect.objectContaining({ sessionID: "session-2", id: expect.stringMatching(/^evt_/), command: "ls" }),
+    ])
+    expect(syncedDirectories).toEqual(["/repo/worktree-a", "/repo/worktree-a", "/repo/worktree-b", "/repo/worktree-b"])
+    expect(serverSessionSyncs).toBe(0)
+    expect(promoted).toEqual([
+      { directory: "/repo/worktree-a", sessionID: "session-1" },
+      { directory: "/repo/worktree-b", sessionID: "session-2" },
+    ])
+    expect(syncedDirectories).toEqual(["/repo/worktree-a", "/repo/worktree-a", "/repo/worktree-b", "/repo/worktree-b"])
+  })
+
+  test("applies auto-accept to newly created sessions", async () => {
+    const submit = createPromptSubmit({
+      prompt,
+      info: () => undefined,
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => true,
+      mode: () => "shell",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+      newSessionWorktree: () => selected,
+      onNewSessionWorktreeReset: () => undefined,
+      onSubmit: () => undefined,
+    })
+
+    const event = { preventDefault: () => undefined } as unknown as Event
+
+    await submit.handleSubmit(event)
+
+    expect(enabledAutoAccept).toEqual([{ server: "server-a", sessionID: "session-1", directory: "/repo/worktree-a" }])
+  })
+
+  test("keeps auto-accept bound to the submission server", async () => {
+    let release = () => {}
+    createSessionGate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const submit = createPromptSubmit({
+      prompt,
+      info: () => undefined,
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => true,
+      mode: () => "shell",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+      newSessionWorktree: () => selected,
+      onNewSessionWorktreeReset: () => undefined,
+      onSubmit: () => undefined,
+    })
+
+    const result = submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
+    permissionServer = "server-b"
+    release()
+    await result
+
+    expect(enabledAutoAccept).toEqual([{ server: "server-a", sessionID: "session-1", directory: "/repo/worktree-a" }])
+  })
+
+  test("promotes drafts using the selected project's server", async () => {
+    search = { draftId: "draft-1" }
+    const submit = createPromptSubmit({
+      prompt,
+      info: () => undefined,
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+      newSessionWorktree: () => selected,
+      onNewSessionWorktreeReset: () => undefined,
+      onSubmit: () => undefined,
+    })
+
+    await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
+
+    expect(promotedDrafts).toEqual([{ draftID: "draft-1", server: "project-server", sessionId: "session-1" }])
+  })
+
+  test("includes the selected variant on optimistic prompts", async () => {
+    params = { id: "session-1" }
+    variant = "high"
+
+    const submit = createPromptSubmit({
+      prompt,
+      info: () => ({ id: "session-1" }),
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+      onSubmit: () => undefined,
+    })
+
+    const event = { preventDefault: () => undefined } as unknown as Event
+
+    await submit.handleSubmit(event)
+    await Bun.sleep(0)
+
+    expect(optimistic).toHaveLength(1)
+    expect(optimistic[0]).toMatchObject({
+      message: {
+        agent: "agent",
+        model: { providerID: "provider", modelID: "model", variant: "high" },
+      },
+    })
+    expect(sentPrompts).toEqual(["/repo/main"])
+    expect(promptInputs[0]).toMatchObject({
+      sessionID: "session-1",
+      text: "ls",
+      files: [],
+      agents: [],
+    })
+    expect((promptInputs[0] as { id?: string }).id).toStartWith("msg_")
+    expect((promptInputs[0] as { legacyParts?: { id: string; type: string; text?: string }[] }).legacyParts).toEqual([
+      { id: expect.stringMatching(/^prt_/), type: "text", text: "ls" },
+    ])
+  })
+
+  test("submits slash commands through the current session API", async () => {
+    params = { id: "session-1" }
+    variant = "high"
+    commands.push({ name: "review" })
+    promptValue = [{ type: "text", content: "/review staged changes", start: 0, end: 22 }]
+
+    const submit = createPromptSubmit({
+      prompt,
+      info: () => ({ id: "session-1" }),
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+    })
+
+    await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
+
+    expect(sentCommands).toEqual([
+      {
+        sessionID: "session-1",
+        id: expect.stringMatching(/^msg_/),
+        command: "review",
+        arguments: "staged changes",
+        agent: "agent",
+        model: { id: "model", providerID: "provider", variant: "high" },
+        files: [],
+      },
+    ])
+    expect(serverSessionSyncs).toBe(0)
+  })
+
+  test("uses an injected model selection", async () => {
+    params = { id: "session-1" }
+    const model = {
+      current: () => ({ id: "draft-model", provider: { id: "draft-provider" } }),
+      variant: { current: () => "draft-variant" },
+    } as unknown as ModelSelection
+    const submit = createPromptSubmit({
+      prompt,
+      info: () => ({ id: "session-1" }),
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+      model,
+    })
+
+    await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
+
+    expect(optimistic[0]).toMatchObject({
+      message: {
+        model: { providerID: "draft-provider", modelID: "draft-model", variant: "draft-variant" },
+      },
+    })
+  })
+
+  test("seeds new sessions before optimistic prompts are added", async () => {
+    const submit = createPromptSubmit({
+      prompt,
+      info: () => undefined,
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+      newSessionWorktree: () => selected,
+      onNewSessionWorktreeReset: () => undefined,
+      onSubmit: () => undefined,
+    })
+
+    const event = { preventDefault: () => undefined } as unknown as Event
+
+    await submit.handleSubmit(event)
+
+    expect(storedSessions["/repo/worktree-a"]).toHaveLength(1)
+    expect(storedSessions["/repo/worktree-a"]?.[0]).toMatchObject({ id: "session-1", title: "New session 1" })
+    expect(optimisticSeeded).toEqual([true])
+  })
+})
+
+describe("prompt submit context attachments", () => {
+  test.each([false, true])("preserves attachment edits during admission (failure: %s)", async (failure) => {
+    params = { id: "session-1" }
+    failPrompt = failure
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    onPrompt = async () => {
+      entered.resolve()
+      await release.promise
+    }
+    const store = createContextAttachmentStore(
+      () => "ws-1",
+      async (input) => ({
+        contextCapsuleID: `capsule-${input.ctxPackID}`,
+        sourceCtxPackID: input.ctxPackID,
+        label: input.ctxPackID,
+        contentHash: input.expectedContentHash,
+        estimatedTokens: 10,
+      }),
+    )
+    const first = {
+      version: 1 as const,
+      workspaceID: "ws-1",
+      ctxPackID: "first",
+      contentHash: "hash",
+      label: "First",
+      estimatedTokens: 10,
+    }
+    const target = { instanceID: "instance-1", functionalityID: "builtin:chat" }
+    await store.addCtxPack(first, target)
+    const result = createPromptSubmit(makeSubmitInput({ contextAttachmentStore: store })).handleSubmit(submitEvent)
+    await entered.promise
+    if (failure) store.remove(store.attachments()[0].clientAttachmentID)
+    await store.addCtxPack({ ...first, ctxPackID: "second" }, target)
+    release.resolve()
+
+    expect(await result).toBe(!failure)
+    expect(promptInputs).toHaveLength(1)
+    expect(promptInputs[0]).toMatchObject({ contextAttachments: [{ contextCapsuleID: "capsule-first" }] })
+    expect(store.attachments().map((attachment) => attachment.source.ctxPackID)).toEqual(["second"])
+  })
+
+  test("two ready attachments → request carries contextAttachments, no text concat, exactly one prompt call", async () => {
+    params = { id: "session-1" }
+    const first = makeAttachment({
+      contextCapsuleID: "capsule-a",
+      label: "Pack A",
+      contentHash: "hash-a",
+      estimatedTokens: 200,
+    })
+    const second = makeAttachment({
+      contextCapsuleID: "capsule-b",
+      label: "Pack B",
+      contentHash: "hash-b",
+      estimatedTokens: 400,
+    })
+    const spy = createAttachmentStore([first, second])
+    const submit = createPromptSubmit(makeSubmitInput({ contextAttachmentStore: spy.store }))
+
+    await submit.handleSubmit(submitEvent)
+    await Bun.sleep(0)
+
+    expect(sentPrompts).toEqual(["/repo/main"])
+    expect(promptInputs).toHaveLength(1)
+    const request = promptInputs[0] as Record<string, unknown>
+    expect(request.text).toBe("ls")
+    expect(request.contextAttachments).toEqual([
+      {
+        contextCapsuleID: "capsule-a",
+        label: "Pack A",
+        contentHash: "hash-a",
+        source: { kind: "ctxpack", ctxPackID: first.source.ctxPackID },
+      },
+      {
+        contextCapsuleID: "capsule-b",
+        label: "Pack B",
+        contentHash: "hash-b",
+        source: { kind: "ctxpack", ctxPackID: second.source.ctxPackID },
+      },
+    ])
+    expect(Object.keys((request.contextAttachments as Record<string, unknown>[])[0]!).sort()).toEqual([
+      "contentHash",
+      "contextCapsuleID",
+      "label",
+      "source",
+    ])
+    // Success clears both the text (existing clearInput) and the attachments.
+    expect(spy.cleared).toBe(1)
+    expect(spy.restored).toHaveLength(0)
+  })
+
+  test("queue delivery carries the same contextAttachments array", async () => {
+    params = { id: "session-1" }
+    const first = makeAttachment({ contextCapsuleID: "capsule-a", label: "Pack A", contentHash: "hash-a" })
+    const spy = createAttachmentStore([first])
+    const submit = createPromptSubmit(makeSubmitInput({ contextAttachmentStore: spy.store }))
+
+    await submit.queueSubmit(submitEvent)
+    await Bun.sleep(0)
+
+    expect(promptInputs).toHaveLength(1)
+    const request = promptInputs[0] as Record<string, unknown>
+    expect(request.delivery).toBe("queue")
+    expect(request.contextAttachments).toEqual([
+      {
+        contextCapsuleID: "capsule-a",
+        label: "Pack A",
+        contentHash: "hash-a",
+        source: { kind: "ctxpack", ctxPackID: first.source.ctxPackID },
+      },
+    ])
+    expect(spy.cleared).toBe(1)
+  })
+
+  test("steer delivery carries the same contextAttachments array", async () => {
+    params = { id: "session-1" }
+    const first = makeAttachment({ contextCapsuleID: "capsule-a", label: "Pack A", contentHash: "hash-a" })
+    const spy = createAttachmentStore([first])
+    const submit = createPromptSubmit(makeSubmitInput({ contextAttachmentStore: spy.store }))
+
+    await submit.handleSubmit(submitEvent)
+    await Bun.sleep(0)
+
+    const request = promptInputs[0] as Record<string, unknown>
+    expect(request.delivery).toBe("steer")
+    expect(request.contextAttachments).toEqual([
+      {
+        contextCapsuleID: "capsule-a",
+        label: "Pack A",
+        contentHash: "hash-a",
+        source: { kind: "ctxpack", ctxPackID: first.source.ctxPackID },
+      },
+    ])
+  })
+
+  test("no attachments → the contextAttachments field is omitted entirely", async () => {
+    params = { id: "session-1" }
+    const submit = createPromptSubmit(makeSubmitInput())
+
+    await submit.handleSubmit(submitEvent)
+    await Bun.sleep(0)
+
+    expect(promptInputs).toHaveLength(1)
+    expect(promptInputs[0]).not.toHaveProperty("contextAttachments")
+  })
+
+  test("custom command path with ready attachments rejects without sending", async () => {
+    params = { id: "session-1" }
+    commands.push({ name: "review" })
+    promptValue = [{ type: "text", content: "/review staged changes", start: 0, end: 22 }]
+    const spy = createAttachmentStore([makeAttachment()])
+    const submit = createPromptSubmit(makeSubmitInput({ contextAttachmentStore: spy.store }))
+
+    await submit.handleSubmit(submitEvent)
+
+    expect(sentCommands).toHaveLength(0)
+    expect(promptInputs).toHaveLength(0)
+    expect(spy.cleared).toBe(0)
+    expect(spy.restored).toHaveLength(0)
+    expect(toastCalls.some((call) => call.title === "Context attachments are not supported for this command")).toBe(
+      true,
+    )
+  })
+
+  test("shell mode with ready attachments rejects without sending", async () => {
+    params = { id: "session-1" }
+    const spy = createAttachmentStore([makeAttachment()])
+    const submit = createPromptSubmit(makeSubmitInput({ mode: () => "shell", contextAttachmentStore: spy.store }))
+
+    await submit.handleSubmit(submitEvent)
+
+    expect(sentShell).toHaveLength(0)
+    expect(promptInputs).toHaveLength(0)
+    expect(spy.cleared).toBe(0)
+    expect(toastCalls.some((call) => call.title === "Context attachments are not supported for this command")).toBe(
+      true,
+    )
+  })
+
+  test("shell mode with a selected skill rejects without clearing or executing", async () => {
+    params = { id: "session-1" }
+    const selected: Prompt = [
+      { type: "skill", name: "review", content: "@review", start: 0, end: 7 },
+      { type: "text", content: " status", start: 7, end: 14 },
+    ]
+    promptValue = selected
+    const history: Prompt[] = []
+    const submit = createPromptSubmit(
+      makeSubmitInput({ mode: () => "shell", addToHistory: (value) => history.push(value) }),
+    )
+
+    expect(await submit.handleSubmit(submitEvent)).toBeFalse()
+    expect(sentShell).toHaveLength(0)
+    expect(promptInputs).toHaveLength(0)
+    expect(promptValue).toEqual(selected)
+    expect(history).toEqual([])
+    expect(toastCalls).toContainEqual({
+      title: "prompt.toast.skillCommandUnsupported.title",
+      description: "prompt.toast.skillCommandUnsupported.description",
+    })
+  })
+
+  test("only ready attachments are serialized; error drafts are skipped", async () => {
+    params = { id: "session-1" }
+    const ready = makeAttachment({ contextCapsuleID: "capsule-a", label: "Pack A", contentHash: "hash-a" })
+    const failed = makeAttachment({
+      contextCapsuleID: "capsule-b",
+      label: "Pack B",
+      contentHash: "hash-b",
+      status: "error",
+      errorCode: "materialize-failed",
+    })
+    const spy = createAttachmentStore([ready, failed])
+    const submit = createPromptSubmit(makeSubmitInput({ contextAttachmentStore: spy.store }))
+
+    await submit.handleSubmit(submitEvent)
+    await Bun.sleep(0)
+
+    const request = promptInputs[0] as Record<string, unknown>
+    expect(request.contextAttachments).toEqual([
+      {
+        contextCapsuleID: "capsule-a",
+        label: "Pack A",
+        contentHash: "hash-a",
+        source: { kind: "ctxpack", ctxPackID: ready.source.ctxPackID },
+      },
+    ])
+  })
+
+  test("failure restores the send-time snapshot and clears nothing", async () => {
+    params = { id: "session-1" }
+    failPrompt = true
+    const first = makeAttachment()
+    const second = makeAttachment()
+    const spy = createAttachmentStore([first, second])
+    const submit = createPromptSubmit(makeSubmitInput({ contextAttachmentStore: spy.store }))
+
+    await submit.handleSubmit(submitEvent)
+    await Bun.sleep(0)
+
+    expect(spy.restored).toHaveLength(1)
+    expect(spy.restored[0]).toEqual([first, second])
+    expect(spy.cleared).toBe(0)
+    // Exactly one admission attempt was made.
+    expect(promptInputs).toHaveLength(1)
+  })
+
+  test("successful admission after a failed one clears the attachments", async () => {
+    params = { id: "session-1" }
+    const spy = createAttachmentStore([makeAttachment()])
+    const submit = createPromptSubmit(makeSubmitInput({ contextAttachmentStore: spy.store }))
+
+    await submit.handleSubmit(submitEvent)
+    await Bun.sleep(0)
+    expect(spy.cleared).toBe(1)
+
+    await submit.handleSubmit(submitEvent)
+    await Bun.sleep(0)
+    expect(promptInputs).toHaveLength(2)
+    expect(spy.cleared).toBe(2)
+  })
+})

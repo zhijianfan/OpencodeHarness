@@ -1,0 +1,2721 @@
+import { TitlebarSettingsButton } from "@/components/titlebar"
+import "./canvas.css"
+import { makeEventListener } from "@solid-primitives/event-listener"
+import { createMediaQuery } from "@solid-primitives/media"
+import { makeResizeObserver } from "@solid-primitives/resize-observer"
+import { useTheme } from "@opencode-ai/ui/theme/context"
+import { Workspace } from "@opencode-ai/schema/workspace"
+import type { WorkspaceBlockRecord, WorkspaceLayoutInfo } from "@opencode-ai/sdk/v2/client"
+import { DebugBar } from "@/components/debug-bar"
+import { CanvasFps } from "./fps"
+import { useLayout } from "@/context/layout"
+import { useLanguage } from "@/context/language"
+import { usePlatform } from "@/context/platform"
+import { useProviders } from "@/hooks/use-providers"
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  createUniqueId,
+  For,
+  onCleanup,
+  onMount,
+  Show,
+  type JSX,
+} from "solid-js"
+import { createStore, reconcile, type SetStoreFunction } from "solid-js/store"
+import { Portal } from "solid-js/web"
+import { createCanvasManager } from "./manager"
+import { createModelRefreshState, ModelRefreshAction } from "./model-refresh-action"
+import { MasterAgentBlock } from "./master-agent/block"
+import { MASTER_AGENT_FUNCTIONALITY_BY_TYPE, MASTER_AGENT_MODULE } from "./master-agent/functionality"
+import type { ModelSelection } from "./master-agent/types"
+import { ChatRelayBody, iconClose, iconRelay, iconSpin } from "./blocks/chat-relay"
+import { BlockRuntimeHost, useBlockRuntimeHandle } from "./runtime/block-runtime-host"
+import { useBlockRuntimeServices } from "./runtime/provider"
+import { registrationFor } from "./runtime/registrations"
+import type { OperatingChatView } from "./runtime/registrations/operating-chat"
+import type { CanvasDiagnosticsSource } from "./diagnostics"
+import { BLOCK_RUNTIME_V3 } from "./flag"
+import { createBlockLocalViewStore } from "./runtime/local-view-store"
+import { BlockRuntimeProvider } from "./runtime/provider"
+import { CanvasSessionSurfaceProviders } from "./session-surface-providers"
+import { CanvasSessionSurface } from "./session-surface"
+import { prepareWorkspaceSession } from "./session-models"
+import type { RuntimeBlockHandle } from "./runtime/contracts"
+import { CtxPackBrowserBlockBody } from "./blocks/ctxpack-browser/block-body"
+import { ScratchpadBody } from "./scratchpad"
+import { CtxPackDraftProvider } from "@/context/ctxpack/draft"
+import { CtxPackSelectionOverlay } from "@/context/ctxpack/selection-overlay"
+import { createCtxPackSdkFacade } from "@/context/ctxpack/sdk-facade"
+import type { CtxPackCreateRequestLocal } from "@/context/ctxpack/create-dialog"
+import { useServerSDK } from "@/context/server-sdk"
+import {
+  clampCamera,
+  panCameraFree,
+  screenToWorld,
+  zoomCamera,
+  type Camera,
+  type Point,
+  type Size,
+} from "./editor/camera"
+import {
+  DEFAULT_CELL,
+  clampBlockSize,
+  clampInitialSquare,
+  initialSquareSize,
+  moveBlock,
+  normalizeZOrder,
+  packedPanel,
+  resolveOverlap,
+  resizeBlock,
+  snap,
+  type GridConstraints,
+  type GridRect,
+} from "./editor/grid"
+
+const STORAGE_KEY = "opencode-canvas-v1"
+const VIEW_STORAGE_KEY = "opencode.canvas.frame.v1"
+
+// Device-local presentation state remains isolated from layout descriptors.
+const localViewStore = createBlockLocalViewStore()
+
+interface CanvasModelCatalogItem extends ModelSelection {
+  key: string
+  providerName: string
+  modelName: string
+  variants: readonly string[]
+}
+
+const CANVAS_MODEL_ROLES = ["main", "subagent"] as const
+type CanvasModelRole = (typeof CANVAS_MODEL_ROLES)[number]
+
+function resolveCanvasModelSelection(raw: string | undefined, models: readonly CanvasModelCatalogItem[]) {
+  if (!raw) return { key: undefined, variant: undefined }
+  const decoded = Workspace.ModelSelection.decode(raw)
+  if (decoded) {
+    const key = Workspace.ModelSelection.encode({ providerID: decoded.providerID, modelID: decoded.modelID })
+    const model = models.find((item) => item.key === key)
+    // Prefer the canonical base-model + effort meaning whenever the current
+    // catalog supports it. This makes an otherwise ambiguous raw key agree
+    // with Core and the shared codec.
+    if (model && (!decoded.variant || model.variants.includes(decoded.variant))) {
+      return { key, variant: decoded.variant }
+    }
+  }
+  // Older Canvas builds wrote catalog IDs without escaping colons. Resolve
+  // those strings against the live catalog when the canonical interpretation
+  // is unavailable; an exact model match wins over a shorter legacy prefix.
+  const exact = models.find((item) => `${item.providerID}:${item.modelID}` === raw)
+  if (exact) return { key: exact.key, variant: undefined }
+  const legacy = models
+    .map((item) => ({ item, prefix: `${item.providerID}:${item.modelID}:` }))
+    .filter((item) => raw.startsWith(item.prefix))
+    .reduce<((typeof models)[number] & { prefix: string }) | undefined>(
+      (longest, item) =>
+        !longest || item.prefix.length > longest.prefix.length ? { ...item.item, prefix: item.prefix } : longest,
+      undefined,
+    )
+  if (legacy) return { key: legacy.key, variant: raw.slice(legacy.prefix.length) || undefined }
+  if (!decoded) return { key: undefined, variant: undefined }
+  return {
+    key: Workspace.ModelSelection.encode({ providerID: decoded.providerID, modelID: decoded.modelID }),
+    variant: decoded.variant,
+  }
+}
+
+// Module-level listener registry: Vite HMR re-executes this module without
+// disposing the previous instance's window listeners, which stacks them and
+// makes every pointermove apply the pan/block delta N times (canvas moves
+// faster than the cursor, gets laggy). Register the module dispose hook to
+// clean up all tracked listeners on hot reload.
+const moduleCleanups = new Set<() => void>()
+function trackCleanup(cleanup: () => void) {
+  let active = true
+  const dispose = () => {
+    if (!active) return
+    active = false
+    moduleCleanups.delete(dispose)
+    cleanup()
+  }
+  moduleCleanups.add(dispose)
+  onCleanup(dispose)
+}
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    for (const cleanup of moduleCleanups) {
+      try {
+        cleanup()
+      } catch {
+        /* listener already removed */
+      }
+    }
+    moduleCleanups.clear()
+  })
+}
+
+const blockConstraints: GridConstraints = { minW: 248, minH: 124, maxW: null, maxH: null, initialAspect: "square" }
+const hydratedBlockConstraints = { ...blockConstraints, minW: 0, minH: 0 }
+
+export type CanvasBlockType =
+  | "context"
+  | "tools"
+  | "files"
+  | "notes"
+  | "voice"
+  | "chat-relay"
+  | "operating-chat"
+  | "master-agent"
+  | "ctxpack-browser"
+
+// Server-side functionality IDs (the workspace functionality registry is the
+// authority). Every block type maps 1:1 to a registered functionality.
+// The master-agent mapping comes from the I1 descriptor so the renderer and
+// the descriptor can never drift apart.
+export const FUNCTIONALITY_BY_TYPE: Record<CanvasBlockType, string> = {
+  ...MASTER_AGENT_FUNCTIONALITY_BY_TYPE,
+  context: "builtin:context",
+  tools: "builtin:tools",
+  files: "builtin:files",
+  notes: "builtin:notes",
+  voice: "builtin:voice",
+  "chat-relay": "builtin:chat-relay",
+  "operating-chat": "builtin:operating-chat-session",
+  "ctxpack-browser": "builtin:ctxpack-browser",
+}
+
+export const TYPE_BY_FUNCTIONALITY: Partial<Record<string, CanvasBlockType>> = Object.fromEntries(
+  Object.entries(FUNCTIONALITY_BY_TYPE).map(([type, functionality]) => [functionality, type as CanvasBlockType]),
+)
+
+interface CanvasMessage {
+  role: "user" | "assistant"
+  text: string
+  files?: { name: string; url: string }[]
+  payloadId?: string
+  index?: number
+  timeCreated?: number
+  important?: boolean
+}
+
+interface CanvasBlock {
+  id: string
+  type: CanvasBlockType | "error"
+  functionalityID: string
+  x: number
+  y: number
+  w: number
+  h: number
+  z: number
+  collapsed: boolean
+}
+
+interface BlockModule {
+  title: string
+  subtitle: string
+  accent: string
+  w: number
+  h: number
+  icon: () => JSX.Element
+}
+
+function uid() {
+  return `card-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+}
+
+const iconContext = () => (
+  <svg viewBox="0 0 24 24">
+    <path d="M7 4h10l3 3v13H4V4h3Z" />
+    <path d="M14 4v5h6M8 13h8M8 17h6" />
+  </svg>
+)
+const iconTools = () => (
+  <svg viewBox="0 0 24 24">
+    <path d="m14.7 6.3 3-3a5 5 0 0 1-6.5 6.5l-7.6 7.6a2.1 2.1 0 0 0 3 3l7.6-7.6a5 5 0 0 1 6.5-6.5l-3 3-3-3Z" />
+  </svg>
+)
+const iconFiles = () => (
+  <svg viewBox="0 0 24 24">
+    <path d="M3 6h7l2 2h9v11H3V6Z" />
+  </svg>
+)
+const iconNotes = () => (
+  <svg viewBox="0 0 24 24">
+    <path d="M5 4h14v16H5z" />
+    <path d="M8 8h8M8 12h8M8 16h5" />
+  </svg>
+)
+const iconVoice = () => (
+  <svg viewBox="0 0 24 24">
+    <rect x="9" y="3" width="6" height="12" rx="3" />
+    <path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6" />
+  </svg>
+)
+const iconOperating = () => (
+  <svg viewBox="0 0 24 24">
+    <path d="M21 12a8 8 0 0 1-8 8H7l-4 2 1.4-4.2A8 8 0 1 1 21 12Z" />
+    <circle cx="12" cy="12" r="2.4" />
+    <path d="M12 5.5v2M12 16.5v2M5.5 12h2M16.5 12h2" />
+  </svg>
+)
+const iconCollapse = () => (
+  <svg viewBox="0 0 24 24">
+    <path d="m7 10 5 5 5-5" />
+  </svg>
+)
+const iconSend = () => (
+  <svg viewBox="0 0 24 24">
+    <path d="m4 12 16-8-5 16-3-7-8-1Z" />
+    <path d="m12 13 8-9" />
+  </svg>
+)
+const iconSearch = () => (
+  <svg viewBox="0 0 24 24">
+    <circle cx="11" cy="11" r="6" />
+    <path d="m16 16 4 4" />
+  </svg>
+)
+const iconFolder = () => (
+  <svg viewBox="0 0 24 24">
+    <path d="M3 6h7l2 2h9v11H3V6Z" />
+  </svg>
+)
+const iconFile = () => (
+  <svg viewBox="0 0 24 24">
+    <path d="M6 3h8l4 4v14H6z" />
+    <path d="M14 3v5h5" />
+  </svg>
+)
+const iconCheck = () => (
+  <svg viewBox="0 0 24 24">
+    <path d="m6 12 4 4 8-9" />
+  </svg>
+)
+const iconMic = () => (
+  <svg viewBox="0 0 24 24">
+    <rect x="9" y="3" width="6" height="12" rx="3" />
+    <path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6" />
+  </svg>
+)
+
+const MODULES: Record<CanvasBlockType, BlockModule> = {
+  context: {
+    title: "Project Context",
+    subtitle: "Design principles",
+    accent: "var(--canvas-blue)",
+    w: 344,
+    h: 334,
+    icon: iconContext,
+  },
+  tools: {
+    title: "Tool Activity",
+    subtitle: "Everything looks healthy",
+    accent: "var(--canvas-mint)",
+    w: 368,
+    h: 300,
+    icon: iconTools,
+  },
+  files: {
+    title: "Workspace Files",
+    subtitle: "agent-canvas / src",
+    accent: "var(--canvas-yellow)",
+    w: 320,
+    h: 352,
+    icon: iconFiles,
+  },
+  notes: {
+    title: "Scratchpad",
+    subtitle: "Private to this canvas",
+    accent: "var(--canvas-peach)",
+    w: 330,
+    h: 270,
+    icon: iconNotes,
+  },
+  voice: {
+    title: "Voice Input",
+    subtitle: "Browser microphone",
+    accent: "var(--canvas-pink)",
+    w: 286,
+    h: 300,
+    icon: iconVoice,
+  },
+  "chat-relay": {
+    title: "ChatRelay",
+    subtitle: "Relayed to the chat account",
+    accent: "var(--canvas-green)",
+    w: 380,
+    h: 440,
+    icon: iconRelay,
+  },
+  "operating-chat": {
+    title: "Operating Chat Session",
+    subtitle: "OperatingAgent · context stack",
+    accent: "var(--canvas-blue)",
+    w: 420,
+    h: 460,
+    icon: iconOperating,
+  },
+  "ctxpack-browser": {
+    title: "Context Packs",
+    subtitle: "Reusable workspace context",
+    accent: "var(--canvas-mint)",
+    w: 420,
+    h: 460,
+    icon: iconFiles,
+  },
+  // The MasterAgent block owns its chrome (shell, session surface, Coder
+  // selector) inside B3's renderer; the canvas only supplies presentation
+  // metadata from the I1 descriptor.
+  "master-agent": {
+    ...MASTER_AGENT_MODULE,
+  },
+}
+
+interface CanvasState {
+  camera: Camera
+  editing: boolean
+  selectedId: string | null
+  zCounter: number
+  blocks: CanvasBlock[]
+}
+
+interface PersistedState {
+  blocks: PersistedCanvasBlock[]
+}
+
+const ERROR_MODULE: BlockModule = {
+  title: "Unavailable block",
+  subtitle: "Functionality is not installed",
+  accent: "var(--canvas-pink)",
+  w: 320,
+  h: 320,
+  icon: iconClose,
+}
+
+interface PersistedCanvasBlock {
+  id: string
+  functionalityID: string
+  transform: WorkspaceBlockRecord["transform"]
+}
+
+interface PersistedViewState {
+  camera: Camera
+  editing: boolean
+}
+
+interface LegacyPersistedCanvasBlock {
+  id: string
+  type: CanvasBlockType | "legacy"
+  x: number
+  y: number
+  w: number
+  h: number
+  z: number
+}
+
+interface PersistedDiskState {
+  blocks: (PersistedCanvasBlock | LegacyPersistedCanvasBlock)[]
+  camera?: Camera
+  editing?: boolean
+}
+
+function defaultCamera(): Camera {
+  return { x: 0, y: 0, scale: 1 }
+}
+
+function blockOf(functionalityID: string, center: Point, z: number, panel: Size): CanvasBlock {
+  const type = TYPE_BY_FUNCTIONALITY[functionalityID] ?? "error"
+  const module = type === "error" ? ERROR_MODULE : MODULES[type]
+  const side = initialSquareSize(Math.max(module.w, module.h), panel, blockConstraints)
+  return {
+    id: uid(),
+    type,
+    functionalityID,
+    x: Math.round(snap(center.x - side / 2, DEFAULT_CELL)),
+    y: Math.round(snap(center.y - side / 2, DEFAULT_CELL)),
+    w: side,
+    h: side,
+    z,
+    collapsed: false,
+  }
+}
+
+function isTypingTarget(target: EventTarget | null) {
+  const element = target as HTMLElement | null
+  if (!element) return false
+  const tag = element.tagName
+  return tag === "INPUT" || tag === "TEXTAREA" || element.isContentEditable
+}
+
+type Interaction =
+  | { type: "move"; pointerId: number; start: Point; rect: GridRect; blockId: string }
+  | { type: "resize"; pointerId: number; start: Point; rect: GridRect; blockId: string }
+
+function pointerDistance(a: Point, b: Point): number {
+  return Math.hypot(a.x - b.x, a.y - b.y)
+}
+
+function midpoint(a: Point, b: Point): Point {
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
+}
+
+// The camera stored in Solid state is a LIVE store proxy: setState("camera",
+// next) shallow-merges into the same object, so any reference captured from
+// state.camera keeps reading the latest values. Gesture bases MUST be plain
+// frozen snapshots, otherwise each pan move integrates the displacement
+// (Cᵢ = Cᵢ₋₁ + Dᵢ) instead of applying it to the gesture-start camera.
+function snapshotCamera(camera: Camera): Camera {
+  return Object.freeze({ x: camera.x, y: camera.y, scale: camera.scale })
+}
+
+// Live drags stay unsnapped so the block follows the cursor 1:1. Grid
+// snapping happens once on release, without imposing canvas boundaries.
+function moveContinuous(rect: GridRect, delta: { dx: number; dy: number }): GridRect {
+  return { ...rect, x: rect.x + delta.dx, y: rect.y + delta.dy }
+}
+
+export function CanvasWorkspace() {
+  const platform = usePlatform()
+  const theme = useTheme()
+  const language = useLanguage()
+  const [size, setSize] = createSignal<Size>({ w: 0, h: 0 })
+  const [zoomValue, setZoomValue] = createSignal("100%")
+  const [toast, setToast] = createSignal<string>()
+  const [draggingId, setDraggingId] = createSignal<string>()
+  const [resizingId, setResizingId] = createSignal<string>()
+  const [selectedFunctionalityID, setSelectedFunctionalityID] = createSignal("builtin:notes")
+  const [paletteOpen, setPaletteOpen] = createSignal(false)
+  const [statsVisible, setStatsVisible] = createSignal(false)
+  const layoutCtx = useLayout()
+  const isMobile = createMediaQuery("(max-width: 767px)")
+  let viewportRef: HTMLDivElement | undefined
+  let gridRef: HTMLDivElement | undefined
+  let worldRef: HTMLDivElement | undefined
+  let scaleLayerRef: HTMLDivElement | undefined
+  let interaction: Interaction | undefined
+  let panSession: { start: Point; camera: Camera; moved: boolean; startTime: number } | undefined
+  const panPointers = new Map<number, Point>()
+  let pinch: { camera: Camera; scale: number; distance: number } | undefined
+  let lastTap: { time: number; point: Point } | undefined
+  let ignoreDblClickUntil = 0
+  let saveTimer: ReturnType<typeof setTimeout> | undefined
+  let toastTimer: ReturnType<typeof setTimeout> | undefined
+  const capturePanDiagnostics =
+    import.meta.env.DEV &&
+    typeof globalThis === "object" &&
+    (globalThis as { __CANVAS_PAN_DEBUG__?: boolean }).__CANVAS_PAN_DEBUG__ === true
+  let applying = false
+  // Layout authority identity: the server hands over authority to the last
+  // client that pulled the layout tuple. Fresh per mount, so a page reload
+  // claims authority again.
+  const clientID = crypto.randomUUID()
+
+  const projectDirectory = () => layoutCtx.projects.list()[0]?.worktree
+  const providers = useProviders(projectDirectory)
+  const modelCatalog = createMemo(() => {
+    const connected = new Set(providers.connected().map((provider) => provider.id))
+    return [...providers.all()]
+      .filter(([providerID]) => connected.has(providerID))
+      .flatMap(([providerID, provider]) =>
+        Object.entries(provider.models).map(([modelID, model]) => ({
+          key: Workspace.ModelSelection.encode({ providerID, modelID }),
+          providerID,
+          modelID,
+          providerName: provider.name,
+          modelName: model.name ?? modelID,
+          variants: Object.keys(model.variants ?? {}),
+        })),
+      )
+      .sort((a, b) => a.modelName.localeCompare(b.modelName) || a.providerName.localeCompare(b.providerName))
+  })
+  const panel = (): Size => ({ w: size().w, h: size().h })
+
+  function readPersistedLayout() {
+    let saved: PersistedDiskState | undefined
+    let view: PersistedViewState | undefined
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY)
+      if (raw) saved = JSON.parse(raw) as PersistedDiskState
+      const rawView = localStorage.getItem(VIEW_STORAGE_KEY)
+      if (rawView) view = JSON.parse(rawView) as PersistedViewState
+    } catch {
+      saved = undefined
+    }
+    const loadedBlocks = (saved?.blocks ?? [])
+      .map((block) => persistedToBlock(block))
+      .filter((block): block is CanvasBlock => block !== undefined)
+    return {
+      camera: view?.camera ?? saved?.camera ?? defaultCamera(),
+      editing: view?.editing ?? saved?.editing ?? true,
+      blocks: loadedBlocks,
+      zCounter: Math.max(10, ...loadedBlocks.map((block) => block.z)) + 1,
+    }
+  }
+
+  const initialLayout = readPersistedLayout()
+  const [state, setState] = createStore<CanvasState>({
+    camera: initialLayout.camera,
+    editing: initialLayout.editing,
+    selectedId: null,
+    zCounter: initialLayout.zCounter,
+    blocks: initialLayout.blocks,
+  })
+  const replaceBlocks = (blocks: CanvasBlock[]) => setState("blocks", reconcile(blocks, { key: "id" }))
+  if (
+    typeof globalThis === "object" &&
+    (globalThis as { __CANVAS_INTEGRATION_STATE__?: typeof state }).__CANVAS_INTEGRATION_STATE__
+  ) {
+    ;(globalThis as { __CANVAS_INTEGRATION_STATE__?: typeof state }).__CANVAS_INTEGRATION_STATE__ = state
+  }
+
+  // The communication manager owns workspace layout, catalog, and config
+  // authority. Runtime registrations own their server session bindings; the
+  // canvas UI renders local projections and reports workspace edits.
+  const manager = createCanvasManager({
+    clientID,
+    directory: projectDirectory,
+    isMobile,
+    getRecords: () => toRecords(state.blocks),
+    onServerLayout: (layout) => applyServerLayout(layout),
+    hasLocalBlocks: () => state.blocks.length > 0,
+    notify: showToast,
+    onWorkspaceInvalidated: () => showToast("Workspace changed; reconnecting blocks"),
+    runtimeHostBindings: BLOCK_RUNTIME_V3,
+  })
+  const paletteItems = () =>
+    (manager.connected()
+      ? manager.functionalities()
+      : Object.entries(FUNCTIONALITY_BY_TYPE).map(([type, id]) => ({
+          id,
+          label: MODULES[type as CanvasBlockType].title,
+        }))
+    )
+      .filter((item) => item.id !== "builtin:chat")
+      .map((item) => ({
+        id: item.id,
+        label: item.label,
+        module: functionalityModule(item.id),
+      }))
+  createEffect(() => {
+    const items = paletteItems()
+    if (items.some((item) => item.id === selectedFunctionalityID())) return
+    setSelectedFunctionalityID(items[0]?.id ?? "")
+  })
+  if (
+    typeof globalThis === "object" &&
+    (globalThis as { __CANVAS_INTEGRATION_STATE__?: unknown }).__CANVAS_INTEGRATION_STATE__
+  ) {
+    ;(globalThis as { __CANVAS_MANAGER__?: { masterAgent: unknown } }).__CANVAS_MANAGER__ = manager
+  }
+
+  // Diagnostics source (L integration action): the dev overlay/console can
+  // collect per-block registration mode + workspace state from the live
+  // manager and registration table.
+  if (typeof globalThis === "object" && import.meta.env.DEV) {
+    const source: CanvasDiagnosticsSource = {
+      blocks: () => state.blocks.map((block) => ({ id: block.id, type: block.type })),
+      functionalityIDFor: (type) => FUNCTIONALITY_BY_TYPE[type as CanvasBlockType] ?? type,
+      registrationModeFor: (_blockID, functionalityID) => {
+        if (!BLOCK_RUNTIME_V3) return "none"
+        const registration = registrationFor(functionalityID)
+        if (!registration) return "none"
+        return registration.mode === "native" || registration.mode === "local" ? registration.mode : "none"
+      },
+      localViewKeysFor: (blockID) => Object.keys(localViewStore.read<Record<string, unknown>>(blockID) ?? {}),
+      workspace: {
+        id: manager.workspaceID,
+        epoch: manager.workspaceEpoch,
+        connected: manager.connected,
+        dirty: manager.dirty,
+      },
+    }
+    ;(globalThis as { __CANVAS_DIAGNOSTICS_SOURCE__?: CanvasDiagnosticsSource }).__CANVAS_DIAGNOSTICS_SOURCE__ = source
+  }
+  trackCleanup(() => manager.dispose())
+
+  function persist() {
+    const payload: PersistedState = {
+      blocks: state.blocks.map((block) => toPersistedBlock(block)),
+    }
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
+      localStorage.setItem(
+        VIEW_STORAGE_KEY,
+        JSON.stringify({ camera: state.camera, editing: state.editing } satisfies PersistedViewState),
+      )
+    } catch {
+      /* localStorage can be unavailable in private contexts */
+    }
+  }
+
+  function saveSoon() {
+    clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => {
+      persist()
+      void manager.sync()
+    }, 160)
+  }
+
+  // Camera changes stream in during pan/zoom; localStorage writes are slow,
+  // so persist them on a much longer debounce than block edits.
+  let cameraSaveTimer: ReturnType<typeof setTimeout> | undefined
+  function saveSoonCamera() {
+    clearTimeout(cameraSaveTimer)
+    cameraSaveTimer = setTimeout(() => persist(), 800)
+  }
+
+  function load() {
+    let saved: PersistedDiskState | undefined
+    let viewState: PersistedViewState | undefined
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY)
+      if (raw) saved = JSON.parse(raw) as PersistedDiskState
+      const rawView = localStorage.getItem(VIEW_STORAGE_KEY)
+      if (rawView) viewState = JSON.parse(rawView) as PersistedViewState
+    } catch {
+      saved = undefined
+    }
+    setState("camera", viewState?.camera ?? saved?.camera ?? defaultCamera())
+    setState("editing", viewState?.editing ?? saved?.editing ?? true)
+    const loadedBlocks = (saved?.blocks ?? [])
+      .map((block) => persistedToBlock(block))
+      .filter((block): block is CanvasBlock => block !== undefined)
+    replaceBlocks(loadedBlocks)
+    setState("zCounter", Math.max(10, ...loadedBlocks.map((block) => block.z)) + 1)
+  }
+
+  function showToast(message: string) {
+    setToast(message)
+    clearTimeout(toastTimer)
+    toastTimer = setTimeout(() => setToast(undefined), 1700)
+  }
+
+  function saveSubagentModel(model: ModelSelection | null) {
+    const request = model ? manager.masterAgent.coder.set(model) : manager.masterAgent.coder.clear()
+    return request.catch(() => showToast("Couldn't save Subagent model"))
+  }
+
+  function canEditLayout() {
+    if (manager.connected()) return true
+    showToast("Canvas is read-only while offline")
+    return false
+  }
+
+  function select(id: string | null) {
+    setState("selectedId", id)
+    worldRef?.querySelectorAll(".canvas-card.selected").forEach((element) => element.classList.remove("selected"))
+    if (id) worldRef?.querySelector(`[data-card-id="${CSS.escape(id)}"]`)?.classList.add("selected")
+  }
+
+  function bringToFront(id: string) {
+    select(id)
+    if (!state.editing || !manager.connected()) return
+    const block = state.blocks.find((item) => item.id === id)
+    if (!block) return
+    const z = state.zCounter + 1
+    setState("zCounter", z)
+    const index = state.blocks.findIndex((item) => item.id === id)
+    if (index >= 0) setState("blocks", index, "z", z)
+    saveSoon()
+    manager.noteLocalEdit()
+    applyRectDirect(id, { x: block.x, y: block.y, w: block.w, h: block.h, z })
+  }
+
+  // Rect updates mutate the block IN PLACE (path-based store writes) so the
+  // block's object reference never changes. This keeps the render loop from
+  // re-rendering the whole card on every pointermove. The DOM is still
+  // updated by the transform-sync effect below.
+  function setRect(id: string, rect: GridRect) {
+    if (!manager.connected()) return
+    const index = state.blocks.findIndex((block) => block.id === id)
+    if (index < 0) return
+    setState("blocks", index, "x", rect.x)
+    setState("blocks", index, "y", rect.y)
+    setState("blocks", index, "w", rect.w)
+    setState("blocks", index, "h", rect.h)
+    if (rect.z !== undefined) setState("blocks", index, "z", rect.z)
+    saveSoon()
+    manager.noteLocalEdit()
+  }
+
+  // The reactive render loop alone has proven unreliable for mid-gesture
+  // updates in some environments; apply the rect straight onto the DOM node
+  // synchronously inside the pointermove handler so the card always follows
+  // the cursor 1:1. The store update above remains the source of truth for
+  // persistence and reconciliation.
+  function applyRectDirect(id: string, rect: GridRect) {
+    const element = worldRef?.querySelector(`[data-card-id="${CSS.escape(id)}"]`)
+    if (!(element instanceof HTMLElement)) return
+    element.style.left = `${rect.x}px`
+    element.style.top = `${rect.y}px`
+    element.style.width = `${rect.w}px`
+    element.style.height = `${rect.h}px`
+    element.style.zIndex = String(rect.z)
+  }
+
+  // The store is the single source of truth for transforms; this re-applies
+  // every stored rect to the DOM so rendered positions can never drift from
+  // the store after programmatic mutations (server pulls, tidy, reset).
+  function syncAllBlocksDOM() {
+    for (const block of state.blocks) {
+      applyRectDirect(block.id, { x: block.x, y: block.y, w: block.w, h: block.h, z: block.z })
+    }
+  }
+
+  // Removes DOM cards that no longer exist in the store (the render loop may
+  // lag behind store mutations).
+  function pruneCardDOM() {
+    const world = worldRef
+    if (!world) return
+    const ids = new Set(state.blocks.map((block) => block.id))
+    for (const element of world.querySelectorAll<HTMLElement>("[data-card-id]")) {
+      const id = element.dataset.cardId
+      if (id && !ids.has(id)) element.remove()
+    }
+  }
+
+  function applyCamera(camera: Camera) {
+    setState("camera", clampCamera(camera, size()))
+  }
+
+  function resetView() {
+    if (!canEditLayout()) return
+    applyCamera({ x: 0, y: 0, scale: 1 })
+    syncAllBlocksDOM()
+    saveSoon()
+    manager.noteLocalEdit()
+    showToast("View reset")
+  }
+
+  function addBlock(functionalityID: string, worldPoint?: Point) {
+    if (!canEditLayout()) return
+    if (!paletteItems().some((item) => item.id === functionalityID)) return
+    const type = TYPE_BY_FUNCTIONALITY[functionalityID]
+    const module = type ? MODULES[type] : ERROR_MODULE
+    const center = worldPoint ?? screenToWorld(state.camera, { x: size().w / 2, y: size().h / 2 })
+    const z = state.zCounter + 1
+    setState("zCounter", z)
+    const created = blockOf(functionalityID, center, z, panel())
+    const block = { ...created, ...clampInitialSquare(created, panel(), blockConstraints) }
+    setState("blocks", (blocks) => [...blocks, block])
+    select(block.id)
+    saveSoon()
+    manager.noteLocalEdit()
+    showToast(`${module.title} added`)
+  }
+
+  function removeBlock(id: string) {
+    if (!canEditLayout()) return
+    const block = state.blocks.find((item) => item.id === id)
+    if (!block) return
+    setState("blocks", (blocks) => blocks.filter((item) => item.id !== id))
+    worldRef?.querySelector(`[data-card-id="${CSS.escape(id)}"]`)?.remove()
+    if (state.selectedId === id) select(null)
+    saveSoon()
+    manager.noteLocalEdit()
+    showToast("Block removed")
+  }
+
+  function tidyBlocks() {
+    if (!canEditLayout()) return
+    const area = packedPanel(panel())
+    const cursor = { x: area.x, y: area.y, rowHeight: 0 }
+    replaceBlocks(
+      state.blocks.map((block) => {
+        const width = block.collapsed ? 62 : block.w
+        const height = block.collapsed ? 62 : block.h
+        if (cursor.x > area.x && cursor.x + width > area.x + area.w) {
+          cursor.x = area.x
+          cursor.y += cursor.rowHeight + DEFAULT_CELL
+          cursor.rowHeight = 0
+        }
+        const next = clampBlockSize({ ...block, x: cursor.x, y: cursor.y }, blockConstraints)
+        cursor.x = next.x + width + DEFAULT_CELL
+        cursor.y = next.y
+        cursor.rowHeight = Math.max(cursor.rowHeight, height)
+        return { ...block, ...next }
+      }),
+    )
+    syncAllBlocksDOM()
+    saveSoon()
+    manager.noteLocalEdit()
+    showToast("Board tidied")
+  }
+
+  function setEditingMode(editing: boolean) {
+    if (!canEditLayout()) return
+    if (editing) {
+      setState("editing", editing)
+      persist()
+      return
+    }
+    const ordered = [...state.blocks].sort((a, b) => a.z - b.z)
+    const settled = normalizeZOrder(resolveOverlap(ordered.map((block) => clampBlockSize(block, blockConstraints))))
+    const byID = new Map(ordered.map((block, index) => [block.id, settled[index]]))
+    replaceBlocks(state.blocks.map((block) => ({ ...block, ...(byID.get(block.id) ?? {}) })))
+    setState("zCounter", settled.length + 1)
+    setState("editing", false)
+    syncAllBlocksDOM()
+    saveSoon()
+    manager.noteLocalEdit()
+  }
+
+  function toggleTheme() {
+    theme.setColorScheme(theme.mode() === "dark" ? "light" : "dark")
+  }
+
+  function toRecords(blocks: readonly CanvasBlock[]): WorkspaceBlockRecord[] {
+    return blocks.map((block) => ({
+      id: block.id,
+      functionality: block.functionalityID,
+      transform: {
+        x: Math.round(block.x),
+        y: Math.round(block.y),
+        w: Math.round(block.w),
+        h: Math.round(block.h),
+        z: block.z,
+      },
+    }))
+  }
+
+  function toPersistedBlock(block: CanvasBlock): PersistedCanvasBlock {
+    return {
+      id: block.id,
+      functionalityID: block.functionalityID,
+      transform: { x: block.x, y: block.y, w: block.w, h: block.h, z: block.z },
+    }
+  }
+
+  function persistedToBlock(block: PersistedCanvasBlock | LegacyPersistedCanvasBlock): CanvasBlock | undefined {
+    if (!("functionalityID" in block)) {
+      if (block.type === "legacy") return
+      const functionalityID = FUNCTIONALITY_BY_TYPE[block.type]
+      if (!functionalityID) return
+      return recordToBlock({
+        id: block.id,
+        functionality: functionalityID,
+        transform: { x: block.x, y: block.y, w: block.w, h: block.h, z: block.z },
+      })
+    }
+    return recordToBlock({ id: block.id, functionality: block.functionalityID, transform: block.transform })
+  }
+
+  function recordToBlock(record: WorkspaceBlockRecord, hostAuthoritative = false): CanvasBlock | undefined {
+    // Ignore the retired OpenCode block in cached and server-saved layouts.
+    if (record.functionality === "builtin:chat") return
+    const enabled =
+      !hostAuthoritative || manager.functionalities().some((functionality) => functionality.id === record.functionality)
+    const type = enabled ? TYPE_BY_FUNCTIONALITY[record.functionality] : undefined
+    const transform = clampBlockSize(record.transform, hydratedBlockConstraints)
+    return {
+      id: record.id,
+      type: type ?? "error",
+      functionalityID: record.functionality,
+      ...transform,
+      collapsed: localViewStore.read<{ collapsed?: boolean }>(`${record.id}:frame`)?.collapsed ?? false,
+    }
+  }
+
+  // Server-authoritative hydration: replaces the client block set with the
+  // layout the server resolves for our tuple. Camera/editing stay local.
+  function applyServerLayout(layout: WorkspaceLayoutInfo) {
+    applying = true
+    const existingByID = new Map(state.blocks.map((block) => [block.id, block]))
+    const blocks: CanvasBlock[] = []
+    for (const record of layout.blocks) {
+      const block = recordToBlock(record, true)
+      if (!block) continue
+      const existing = existingByID.get(block.id)
+      // Descriptor-only merge: layout replacement touches identity + transform
+      // (and collapsed view-state). Runtime and local view state live outside
+      // the descriptor (C1).
+      blocks.push({ ...block, collapsed: existing?.collapsed ?? block.collapsed })
+    }
+    replaceBlocks(blocks)
+    setState("zCounter", Math.max(10, ...blocks.map((block) => block.z)) + 1)
+    select(null)
+    applying = false
+    syncAllBlocksDOM()
+    pruneCardDOM()
+    persist()
+  }
+
+  createEffect(() => {
+    const bounds = panel()
+    if (bounds.w <= 0 || bounds.h <= 0) return
+    const blocks = state.blocks.map((block) => {
+      const rect = clampBlockSize(block, hydratedBlockConstraints)
+      if (block.x === rect.x && block.y === rect.y && block.w === rect.w && block.h === rect.h) return block
+      return { ...block, ...rect }
+    })
+    if (blocks.every((block, index) => block === state.blocks[index])) return
+    replaceBlocks(blocks)
+  })
+
+  // Keep translation on a permanent compositor layer so beginning, moving,
+  // and ending a pan all follow the same cheap path. CSS zoom intentionally
+  // lays out and rasterizes the inner layer when scale changes, which keeps
+  // text sharp immediately instead of stretching a stale layer bitmap.
+  createEffect(() => {
+    const x = state.camera.x
+    const y = state.camera.y
+    const gridSize = 24 * state.camera.scale
+    const world = worldRef
+    if (!world) return
+    world.style.transform = `translate3d(${x}px, ${y}px, 0)`
+    if (gridRef) gridRef.style.transform = `translate3d(${x % gridSize}px, ${y % gridSize}px, 0)`
+  })
+
+  createEffect(() => {
+    const scale = state.camera.scale
+    if (scaleLayerRef) scaleLayerRef.style.zoom = `${scale}`
+    const gridSize = 24 * scale
+    if (gridRef) gridRef.style.backgroundSize = `${gridSize}px ${gridSize}px`
+    setZoomValue(`${Math.round(scale * 100)}%`)
+  })
+
+  createEffect(() => {
+    state.camera.x
+    state.camera.y
+    state.camera.scale
+    state.editing
+    saveSoonCamera()
+  })
+
+  // Transforms are owned by this effect: every store change re-applies each
+  // block's rect to its DOM node. This runs after the render flush (so newly
+  // added cards exist) and is the ONLY writer of left/top/width/height, which
+  // keeps rendered positions consistent with the store after clicks, drags,
+  // snaps, server pulls, tidy, and reset. Mutations report edits explicitly
+  // (saveSoon + manager.noteLocalEdit) so this effect stays pure.
+  createEffect(() => {
+    state.blocks
+    syncAllBlocksDOM()
+  })
+
+  onMount(() => {
+    load()
+    const resize = makeResizeObserver((entries) => {
+      const entry = entries[0]
+      if (entry) setSize({ w: entry.contentRect.width, h: entry.contentRect.height })
+    })
+    resize.observe(viewportRef!)
+    trackCleanup(makeEventListener(window, "pagehide", () => persist()))
+    trackCleanup(makeEventListener(window, "blur", () => resetPointerState()))
+    manager.start()
+  })
+
+  onCleanup(() => {
+    clearTimeout(saveTimer)
+    clearTimeout(cameraSaveTimer)
+    clearTimeout(toastTimer)
+  })
+
+  const onViewportPointerDown = (event: PointerEvent) => {
+    if (event.button > 2) return
+    if (interaction) return
+    const target = event.target as HTMLElement
+    if (
+      target.closest(
+        ".canvas-toolbar, .canvas-block-bar-wrap, .canvas-stats-overlay, .canvas-bottom-left, .canvas-bottom-right",
+      )
+    )
+      return
+    // Right-drag pans the canvas everywhere — including over cards — without
+    // triggering the browser context menu (suppressed at the canvas root).
+    if (target.closest(".canvas-card") && event.button !== 2) return
+    event.preventDefault()
+    select(null)
+    viewportRef?.classList.add("is-panning")
+    viewportRef?.setPointerCapture(event.pointerId)
+    panPointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    if (panPointers.size === 1) {
+      const baseCamera = snapshotCamera(state.camera)
+      panSession = {
+        start: { x: event.clientX, y: event.clientY },
+        camera: baseCamera,
+        moved: false,
+        startTime: performance.now(),
+      }
+      panSamples = []
+      recordPanSample(baseCamera)
+      return
+    }
+    if (panPointers.size === 2) {
+      const [a, b] = [...panPointers.values()]
+      const baseCamera = snapshotCamera(state.camera)
+      pinch = { camera: baseCamera, scale: baseCamera.scale, distance: Math.max(pointerDistance(a, b), 1) }
+      panSession = undefined
+    }
+  }
+
+  const onViewportDoubleClick = (event: MouseEvent) => {
+    if (performance.now() < ignoreDblClickUntil) return
+    if (
+      (event.target as HTMLElement).closest(
+        ".canvas-card, .canvas-toolbar, .canvas-block-bar-wrap, .canvas-stats-overlay, .canvas-bottom-left, .canvas-bottom-right",
+      )
+    )
+      return
+    if (!state.editing) return
+    const point = screenToWorld(state.camera, { x: event.clientX, y: event.clientY })
+    addBlock("builtin:notes", { x: point.x - MODULES.notes.w / 2, y: point.y - 50 })
+  }
+
+  function onViewportTap(point: Point) {
+    const now = performance.now()
+    const previous = lastTap
+    lastTap = undefined
+    if (!state.editing) return
+    if (previous && now - previous.time < 420 && pointerDistance(point, previous.point) < 44) {
+      ignoreDblClickUntil = performance.now() + 600
+      const world = screenToWorld(state.camera, point)
+      addBlock("builtin:notes", { x: world.x - MODULES.notes.w / 2, y: world.y - 50 })
+      return
+    }
+    lastTap = { time: now, point }
+  }
+
+  // The card's rendered closure can hold a stale block object when the render
+  // loop is behind; always take the drag-start rect from the live store.
+  function liveRect(block: CanvasBlock): GridRect {
+    const current = state.blocks.find((item) => item.id === block.id)
+    return current
+      ? { x: current.x, y: current.y, w: current.w, h: current.h, z: current.z }
+      : { x: block.x, y: block.y, w: block.w, h: block.h, z: block.z }
+  }
+
+  // A click anywhere on a card behaves like the header interaction: it selects
+  // the block and — in editing mode — starts the same drag-to-move gesture.
+  // Interactive content (buttons, inputs, editable text) is excluded from body drags.
+  const onCardPointerDown = (event: PointerEvent, block: CanvasBlock) => {
+    if (event.button !== 0) return
+    bringToFront(block.id)
+    if (!state.editing) return
+    if (!canEditLayout()) return
+    if (interaction || panPointers.size > 0) return
+    const target = event.target as HTMLElement
+    if (
+      target.closest(
+        "button, [role='button'], input, textarea, select, a, [contenteditable=''], [contenteditable='true'], .canvas-resize-handle, .canvas-session-surface",
+      )
+    )
+      return
+    event.preventDefault()
+    event.stopPropagation()
+    const card = event.currentTarget as HTMLElement
+    card.setPointerCapture(event.pointerId)
+    setDraggingId(block.id)
+    interaction = {
+      type: "move",
+      pointerId: event.pointerId,
+      start: { x: event.clientX, y: event.clientY },
+      rect: liveRect(block),
+      blockId: block.id,
+    }
+  }
+
+  const onHeaderPointerDown = (event: PointerEvent, block: CanvasBlock) => {
+    if (event.button !== 0 || !state.editing) return
+    if (!canEditLayout()) return
+    if (interaction || panPointers.size > 0) return
+    if ((event.target as HTMLElement).closest("button, span")) return
+    event.preventDefault()
+    event.stopPropagation()
+    bringToFront(block.id)
+    const header = event.currentTarget as HTMLElement
+    header.setPointerCapture(event.pointerId)
+    setDraggingId(block.id)
+    interaction = {
+      type: "move",
+      pointerId: event.pointerId,
+      start: { x: event.clientX, y: event.clientY },
+      rect: liveRect(block),
+      blockId: block.id,
+    }
+  }
+
+  const onResizePointerDown = (event: PointerEvent, block: CanvasBlock) => {
+    if (event.button !== 0 || !state.editing) return
+    if (!canEditLayout()) return
+    if (interaction || panPointers.size > 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    bringToFront(block.id)
+    const handle = event.currentTarget as HTMLElement
+    handle.setPointerCapture(event.pointerId)
+    setResizingId(block.id)
+    interaction = {
+      type: "resize",
+      pointerId: event.pointerId,
+      start: { x: event.clientX, y: event.clientY },
+      rect: liveRect(block),
+      blockId: block.id,
+    }
+  }
+
+  function endInteraction() {
+    if (!interaction) return
+    if (!manager.connected()) {
+      resetPointerState()
+      canEditLayout()
+      return
+    }
+    setDraggingId(undefined)
+    setResizingId(undefined)
+    const index = state.blocks.findIndex((block) => block.id === interaction!.blockId)
+    if (index >= 0) {
+      const block = state.blocks[index]
+      const settled = clampBlockSize(
+        {
+          x: snap(block.x, DEFAULT_CELL),
+          y: snap(block.y, DEFAULT_CELL),
+          w: snap(block.w, DEFAULT_CELL),
+          h: snap(block.h, DEFAULT_CELL),
+          z: block.z,
+        },
+        blockConstraints,
+      )
+      setState("blocks", index, { ...block, ...settled })
+      applyRectDirect(interaction.blockId, settled)
+      saveSoon()
+      manager.noteLocalEdit()
+    }
+    interaction = undefined
+  }
+
+  // Pan writes the camera directly per pointermove event — the browser
+  // already throttles pointermove to its frame cadence, and any extra
+  // coalescing layer adds a timing dependency that can lag behind the mouse
+  // on some machines.
+  function schedulePanUpdate(camera: Camera) {
+    setState("camera", camera)
+    recordPanSample(camera)
+  }
+
+  // DEV-only movement capture: samples are collected ONLY while a pan
+  // gesture is active and uploaded to the dev server, which appends them to
+  // the project's .test-data/canvas-pan-debug.jsonl for offline analysis.
+  interface PanSample {
+    t: number
+    px: number
+    py: number
+    cx: number
+    cy: number
+    scale: number
+    startX: number
+    startY: number
+    startCx: number
+    startCy: number
+    startScale: number
+  }
+
+  let panSamples: PanSample[] = []
+
+  function recordPanSample(camera: Camera) {
+    if (!capturePanDiagnostics) return
+    const session = panSession
+    if (!session) return
+    const pointer = [...panPointers.values()].at(-1)
+    if (!pointer) return
+    if (panSamples.length >= 2000) return
+    panSamples.push({
+      t: Math.round(performance.now()),
+      px: Math.round(pointer.x),
+      py: Math.round(pointer.y),
+      cx: Math.round(camera.x),
+      cy: Math.round(camera.y),
+      scale: camera.scale,
+      startX: Math.round(session.start.x),
+      startY: Math.round(session.start.y),
+      startCx: Math.round(session.camera.x),
+      startCy: Math.round(session.camera.y),
+      startScale: session.camera.scale,
+    })
+  }
+
+  function uploadPanSamples() {
+    if (!capturePanDiagnostics || panSamples.length === 0) return
+    const batch = panSamples
+    panSamples = []
+    const env = {
+      screenW: window.screen.width,
+      screenH: window.screen.height,
+      dpr: window.devicePixelRatio,
+      innerW: window.innerWidth,
+      innerH: window.innerHeight,
+      visualViewportScale: window.visualViewport?.scale ?? 1,
+      platform: navigator.platform,
+      userAgent: navigator.userAgent.slice(0, 240),
+      pointerType: "mouse",
+    }
+    void fetch("/__canvas-pan-debug", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session: crypto.randomUUID(), env, samples: batch }),
+    }).catch(() => {
+      /* dev-only diagnostics; never block the UI on upload failures */
+    })
+  }
+
+  // Resets every in-flight pointer gesture (stale entries otherwise turn the
+  // next drag into an accidental two-finger pinch = wrong pan amount).
+  function resetPointerState() {
+    uploadPanSamples()
+    interaction = undefined
+    pinch = undefined
+    panSession = undefined
+    panPointers.clear()
+    setDraggingId(undefined)
+    setResizingId(undefined)
+    viewportRef?.classList.remove("is-panning")
+  }
+
+  // Pointer handlers are bound to the VIEWPORT ELEMENT (in onMount), not
+  // window: pointer capture retargets events to the capture element, which
+  // always bubbles through the viewport. Element-bound listeners die with
+  // their DOM node, so hot reloads can never stack them — eliminating the
+  // pan-moves-N-times-faster-than-the-cursor failure mode by construction.
+  const onPointerMove = (event: PointerEvent) => {
+    if (interaction) {
+      if (!manager.connected()) {
+        resetPointerState()
+        canEditLayout()
+        return
+      }
+      if (interaction.pointerId !== event.pointerId) return
+      const dx = event.clientX - interaction.start.x
+      const dy = event.clientY - interaction.start.y
+      const delta = { dx: dx / state.camera.scale, dy: dy / state.camera.scale }
+      if (interaction.type === "move") {
+        const next = moveContinuous(interaction.rect, delta)
+        setRect(interaction.blockId, next)
+        applyRectDirect(interaction.blockId, next)
+        return
+      }
+      const nextSize = resizeBlock(interaction.rect, delta, "se", blockConstraints)
+      setRect(interaction.blockId, nextSize)
+      applyRectDirect(interaction.blockId, nextSize)
+      return
+    }
+    if (!panPointers.has(event.pointerId)) return
+    panPointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    const pointers = [...panPointers.values()]
+    if (pointers.length >= 2) {
+      if (!pinch) return
+      const distance = Math.max(pointerDistance(pointers[0], pointers[1]), 1)
+      applyCamera(
+        zoomCamera(pinch.camera, pinch.scale * (distance / pinch.distance), midpoint(pointers[0], pointers[1]), size()),
+      )
+      return
+    }
+    if (!panSession) return
+    if (!panSession.moved && pointerDistance({ x: event.clientX, y: event.clientY }, panSession.start) > 8) {
+      panSession.moved = true
+    }
+    schedulePanUpdate(
+      panCameraFree(panSession.camera, {
+        x: event.clientX - panSession.start.x,
+        y: event.clientY - panSession.start.y,
+      }),
+    )
+  }
+
+  const onPointerUp = (event: PointerEvent) => {
+    if (interaction && interaction.pointerId === event.pointerId) {
+      endInteraction()
+      return
+    }
+    if (!panPointers.has(event.pointerId)) return
+    const wasTap =
+      !!panSession &&
+      !panSession.moved &&
+      event.pointerType === "touch" &&
+      performance.now() - panSession.startTime < 450
+    const tapPoint = { x: event.clientX, y: event.clientY }
+    panPointers.delete(event.pointerId)
+    if (panPointers.size === 0) {
+      uploadPanSamples()
+      viewportRef?.classList.remove("is-panning")
+      pinch = undefined
+      panSession = undefined
+    } else if (panPointers.size === 1 && pinch) {
+      const [, point] = [...panPointers.entries()][0]
+      panSession = { start: point, camera: snapshotCamera(state.camera), moved: true, startTime: performance.now() }
+      pinch = undefined
+    }
+    if (wasTap) onViewportTap(tapPoint)
+  }
+
+  const onPointerCancel = (event: PointerEvent) => {
+    if (interaction && interaction.pointerId === event.pointerId) endInteraction()
+    if (!panPointers.has(event.pointerId)) return
+    panPointers.delete(event.pointerId)
+    if (panPointers.size === 0) {
+      uploadPanSamples()
+      viewportRef?.classList.remove("is-panning")
+      pinch = undefined
+      panSession = undefined
+    } else if (panPointers.size === 1 && pinch) {
+      const [, point] = [...panPointers.entries()][0]
+      panSession = { start: point, camera: snapshotCamera(state.camera), moved: true, startTime: performance.now() }
+      pinch = undefined
+    }
+  }
+
+  const onLostPointerCapture = (event: PointerEvent) => {
+    if (interaction && interaction.pointerId === event.pointerId) endInteraction()
+    if (panPointers.has(event.pointerId)) onPointerCancel(event)
+  }
+
+  function onWheel(event: WheelEvent) {
+    const target = event.target as HTMLElement
+    // Mouse-wheel scroll stays available inside scrollable card content
+    // (session UI, message lists, file tree, palette, textareas, embedded
+    // session surfaces); anywhere else the wheel zooms the canvas in/out
+    // towards the cursor.
+    const scrollable = target.closest(
+      ".canvas-card-body, .canvas-messages, .canvas-file-tree, .canvas-context-content, .canvas-tool-list, .canvas-voice-content, .canvas-relay-state, .canvas-relay-transcript, .ctxpack-browser, .canvas-model-picker-list, .canvas-block-palette, .canvas-session-surface, .master-agent-body, textarea",
+    )
+    if (scrollable && !event.ctrlKey && !event.metaKey) return
+    event.preventDefault()
+    const viewport = (event.currentTarget as HTMLElement).getBoundingClientRect()
+    const sensitivity = event.ctrlKey || event.metaKey ? 0.006 : 0.0017
+    const factor = Math.exp(-event.deltaY * sensitivity)
+    setState("camera", (camera) =>
+      zoomCamera(camera, camera.scale * factor, { x: event.clientX, y: event.clientY }, size(), {
+        x: viewport.left,
+        y: viewport.top,
+      }),
+    )
+  }
+
+  trackCleanup(
+    makeEventListener(window, "keydown", (event: KeyboardEvent) => {
+      if (event.defaultPrevented || isTypingTarget(event.target)) return
+      if (event.key === "Escape") select(null)
+      if ((event.key === "Delete" || event.key === "Backspace") && state.selectedId) {
+        removeBlock(state.selectedId)
+      }
+      if (event.key === "0") resetView()
+      if (event.key.toLowerCase() === "n" && state.editing) addBlock("builtin:notes")
+      if (
+        state.editing &&
+        state.selectedId &&
+        ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
+      ) {
+        const block = state.blocks.find((item) => item.id === state.selectedId)
+        if (block && canEditLayout()) {
+          event.preventDefault()
+          const horizontal = event.key === "ArrowLeft" ? -DEFAULT_CELL : event.key === "ArrowRight" ? DEFAULT_CELL : 0
+          const vertical = event.key === "ArrowUp" ? -DEFAULT_CELL : event.key === "ArrowDown" ? DEFAULT_CELL : 0
+          const rect = { x: block.x, y: block.y, w: block.w, h: block.h, z: block.z }
+          const next = event.shiftKey
+            ? resizeBlock(rect, { dx: horizontal, dy: vertical }, "se", blockConstraints)
+            : moveBlock(rect, { dx: horizontal, dy: vertical }, panel())
+          setRect(block.id, next)
+          applyRectDirect(block.id, next)
+        }
+      }
+      if (event.key === "+" || event.key === "=") {
+        setState("camera", (camera) =>
+          zoomCamera(camera, camera.scale * 1.12, { x: size().w / 2, y: size().h / 2 }, size()),
+        )
+      }
+      if (event.key === "-") {
+        setState("camera", (camera) =>
+          zoomCamera(camera, camera.scale / 1.12, { x: size().w / 2, y: size().h / 2 }, size()),
+        )
+      }
+    }),
+  )
+
+  function cardStyle(block: CanvasBlock) {
+    const accent = moduleOf(block).accent
+    // Transforms are NOT rendered here: the render loop has proven to lag
+    // behind the store in some environments, so position/rect ownership lives
+    // in the DOM-sync effect (createEffect below). This only sets the accent.
+    return {
+      "--accent": accent,
+    }
+  }
+
+  function cardClass(block: CanvasBlock) {
+    return {
+      selected: state.selectedId === block.id,
+      collapsed: block.collapsed,
+      dragging: draggingId() === block.id,
+      resizing: resizingId() === block.id,
+    }
+  }
+
+  function moduleOf(block: CanvasBlock) {
+    if (block.type === "error") return ERROR_MODULE
+    return MODULES[block.type]
+  }
+
+  function functionalityModule(functionalityID: string) {
+    const type = TYPE_BY_FUNCTIONALITY[functionalityID]
+    return type ? MODULES[type] : ERROR_MODULE
+  }
+
+  function toggleCollapse(block: CanvasBlock) {
+    const collapsed = !block.collapsed
+    const index = state.blocks.findIndex((item) => item.id === block.id)
+    if (index >= 0) setState("blocks", index, "collapsed", collapsed)
+    localViewStore.write(`${block.id}:frame`, { collapsed })
+  }
+
+  const awaitDescriptorPersisted = (blockID: string, signal: AbortSignal) =>
+    manager.awaitDescriptorPersisted(blockID, signal)
+
+  // Selection drafts belong to the workspace; attachments belong to each session surface.
+  const serverSDK = useServerSDK()
+  const ctxPackCreate = (request: CtxPackCreateRequestLocal) => createCtxPackSdkFacade(serverSDK).create(request)
+
+  return (
+    <CtxPackDraftProvider workspaceID={manager.workspaceID} workspaceEpoch={manager.workspaceEpoch}>
+      <BlockRuntimeProvider
+        workspaceID={manager.workspaceID}
+        workspaceEpoch={manager.workspaceEpoch}
+        connected={manager.connected}
+        awaitDescriptorPersisted={awaitDescriptorPersisted}
+        recoverWorkspace={manager.recoverWorkspace}
+        localView={localViewStore}
+        draftStore={platform.draftStore}
+      >
+        <div
+          class="canvas-app"
+          onContextMenu={(event) => {
+            if (!isTypingTarget(event.target)) event.preventDefault()
+          }}
+        >
+          <div
+            ref={(element) => (viewportRef = element)}
+            class="canvas-viewport"
+            classList={{ "canvas-editing": state.editing }}
+            onPointerDown={onViewportPointerDown}
+            onDblClick={onViewportDoubleClick}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerCancel}
+            onLostPointerCapture={onLostPointerCapture}
+            onWheel={onWheel}
+          >
+            <div ref={(element) => (gridRef = element)} class="canvas-grid" aria-hidden="true" />
+            <div ref={(element) => (worldRef = element)} class="canvas-world">
+              <div ref={(element) => (scaleLayerRef = element)} class="canvas-world-scale">
+                <For each={state.blocks}>
+                  {(item) => {
+                    return (
+                      <section
+                        class="canvas-card"
+                        classList={cardClass(item)}
+                        style={cardStyle(item)}
+                        data-card-id={item.id}
+                        role="group"
+                        aria-label={`${moduleOf(item).title} block`}
+                        tabIndex={0}
+                        onFocus={() => select(item.id)}
+                        onPointerDown={(event) => onCardPointerDown(event, item)}
+                      >
+                        <div class="canvas-card-header" onPointerDown={(event) => onHeaderPointerDown(event, item)}>
+                          <div class="canvas-card-icon">{moduleOf(item).icon()}</div>
+                          <div class="canvas-card-title-wrap">
+                            <h2 class="canvas-card-title">{moduleOf(item).title}</h2>
+                            <Show
+                              when={
+                                item.type !== "operating-chat" &&
+                                item.type !== "master-agent" &&
+                                item.type !== "chat-relay"
+                              }
+                            >
+                              <div class="canvas-card-subtitle">{moduleOf(item).subtitle}</div>
+                            </Show>
+                          </div>
+                          <div class="canvas-header-actions">
+                            <button
+                              type="button"
+                              class="canvas-icon-button"
+                              aria-label={item.collapsed ? "Expand" : "Collapse"}
+                              onClick={() => toggleCollapse(item)}
+                            >
+                              {iconCollapse()}
+                            </button>
+                            <button
+                              type="button"
+                              class="canvas-icon-button"
+                              aria-label="Remove block"
+                              onClick={() => removeBlock(item.id)}
+                            >
+                              {iconClose()}
+                            </button>
+                          </div>
+                        </div>
+                        <div
+                          class="canvas-card-body"
+                          data-ctxpack-source-root
+                          data-workspace-id={manager.workspaceID() ?? ""}
+                          data-block-id={item.id}
+                          data-functionality-id={item.functionalityID}
+                        >
+                          <BlockRuntimeHost
+                            blockID={item.id}
+                            functionalityID={item.functionalityID}
+                            transform={{ x: item.x, y: item.y, w: item.w, h: item.h, z: item.z }}
+                            registration={BLOCK_RUNTIME_V3 ? registrationFor(item.functionalityID) : undefined}
+                            workspaceID={manager.workspaceID() ?? undefined}
+                            workspaceEpoch={manager.workspaceEpoch()}
+                          >
+                            <Show when={item.type === "context"}>
+                              <ContextBody />
+                            </Show>
+                            <Show when={item.type === "tools"}>
+                              <ToolsBody />
+                            </Show>
+                            <Show when={item.type === "files"}>
+                              <FilesBody />
+                            </Show>
+                            <Show when={item.type === "notes"}>
+                              <ScratchpadBody
+                                blockID={item.id}
+                                workspaceID={manager.workspaceID}
+                                workspaceEpoch={manager.workspaceEpoch}
+                                create={ctxPackCreate}
+                              />
+                            </Show>
+                            <Show when={item.type === "voice"}>
+                              <VoiceBody block={item} setState={setState} />
+                            </Show>
+                            <Show when={item.type === "chat-relay"}>
+                              <ChatRelayBody
+                                block={item}
+                                permissions={manager.configPermission()}
+                                focused={state.selectedId === item.id}
+                                onFocus={() => bringToFront(item.id)}
+                              />
+                            </Show>
+                            <Show when={item.type === "operating-chat"}>
+                              <OperatingChatBody
+                                block={item}
+                                modelVersion={manager.modelVersion()}
+                                beforeSubmit={(runtime, sessionID) =>
+                                  prepareWorkspaceSession(
+                                    manager,
+                                    runtime,
+                                    sessionID,
+                                    language.t("canvas.session.models.error"),
+                                  )
+                                }
+                                focused={state.selectedId === item.id}
+                                onFocus={() => bringToFront(item.id)}
+                              />
+                            </Show>
+                            <Show when={item.type === "master-agent"}>
+                              {/* B3's block renderer reads binding and actions through
+                          manager.masterAgent; the canvas passes block identity,
+                          focus state, the manager, the shared model catalog,
+                          and its own focus/selection callback. Session IDs and
+                          binding revisions never enter canvas state or layout. */}
+                              <MasterAgentBlock
+                                blockID={item.id}
+                                focused={state.selectedId === item.id}
+                                manager={manager.masterAgent}
+                                modelVersion={manager.modelVersion()}
+                                beforeSubmit={(runtime, sessionID) =>
+                                  prepareWorkspaceSession(
+                                    manager,
+                                    runtime,
+                                    sessionID,
+                                    language.t("canvas.session.models.error"),
+                                  )
+                                }
+                                onFocus={() => bringToFront(item.id)}
+                              />
+                            </Show>
+                            <Show when={item.type === "ctxpack-browser"}>
+                              {BLOCK_RUNTIME_V3 ? <CtxPackBrowserBlockBody blockID={item.id} /> : null}
+                            </Show>
+                            <Show when={item.type === "error"}>
+                              <div class="canvas-relay-state error" role="alert">
+                                <div class="canvas-relay-state-icon" aria-hidden="true">
+                                  {iconClose()}
+                                </div>
+                                <div class="canvas-relay-state-title">Unavailable block</div>
+                                <div class="canvas-relay-state-note">
+                                  {item.functionalityID} is unavailable in this client or no longer enabled for this
+                                  workspace.
+                                </div>
+                              </div>
+                            </Show>
+                          </BlockRuntimeHost>
+                        </div>
+                        <Show when={state.editing}>
+                          <div
+                            class="canvas-resize-handle"
+                            aria-hidden="true"
+                            onPointerDown={(event) => onResizePointerDown(event, item)}
+                          />
+                        </Show>
+                      </section>
+                    )
+                  }}
+                </For>
+              </div>
+            </div>
+          </div>
+
+          <header class="canvas-toolbar" aria-label="Canvas toolbar">
+            <details
+              class="canvas-workspace-menu"
+              onFocusOut={(event) => {
+                if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return
+                event.currentTarget.removeAttribute("open")
+              }}
+            >
+              <summary class="canvas-workspace-trigger" aria-label="Switch or edit workspace">
+                <span class="canvas-workspace-mark" aria-hidden="true" />
+                <span class="canvas-workspace-trigger-copy">
+                  <span class="canvas-workspace-kicker">Workspace</span>
+                  <span class="canvas-workspace-current">
+                    {manager.workspaces().find((workspace) => workspace.id === manager.workspaceID())?.name ??
+                      "Loading"}
+                  </span>
+                </span>
+                <span class="canvas-workspace-chevron" aria-hidden="true">
+                  &#8964;
+                </span>
+              </summary>
+              <div class="canvas-workspace-popover">
+                <div class="canvas-workspace-popover-title">
+                  <span>Your workspaces</span>
+                  <span>{manager.workspaces().length}</span>
+                </div>
+                <div class="canvas-workspace-list" role="menu" aria-label="Switch workspace">
+                  <For each={manager.workspaces()}>
+                    {(workspace) => (
+                      <button
+                        type="button"
+                        class="canvas-workspace-option"
+                        classList={{ active: workspace.id === manager.workspaceID() }}
+                        role="menuitem"
+                        onClick={(event) => {
+                          event.currentTarget.closest("details")?.removeAttribute("open")
+                          void manager.switchWorkspace(workspace.id)
+                        }}
+                      >
+                        <span class="canvas-workspace-option-mark" aria-hidden="true" />
+                        <span>{workspace.name}</span>
+                        <Show when={workspace.id === manager.workspaceID()}>
+                          <span class="canvas-workspace-option-current">Current</span>
+                        </Show>
+                      </button>
+                    )}
+                  </For>
+                </div>
+                <div class="canvas-workspace-editor">
+                  <label class="canvas-workspace-form-label" for="canvas-workspace-create">
+                    Add workspace
+                  </label>
+                  <form
+                    class="canvas-workspace-form"
+                    onSubmit={(event) => {
+                      event.preventDefault()
+                      const name = new FormData(event.currentTarget).get("name")
+                      if (typeof name !== "string" || !name.trim()) return
+                      void manager.createWorkspace(name)
+                      event.currentTarget.reset()
+                    }}
+                  >
+                    <input
+                      id="canvas-workspace-create"
+                      class="canvas-workspace-input"
+                      name="name"
+                      maxlength={64}
+                      placeholder="Workspace name"
+                      autocomplete="off"
+                      required
+                    />
+                    <button type="submit" class="canvas-workspace-form-button">
+                      Add
+                    </button>
+                  </form>
+                  <label class="canvas-workspace-form-label" for="canvas-workspace-rename">
+                    Edit active workspace
+                  </label>
+                  <form
+                    class="canvas-workspace-form"
+                    onSubmit={(event) => {
+                      event.preventDefault()
+                      const name = new FormData(event.currentTarget).get("name")
+                      if (typeof name !== "string" || !name.trim()) return
+                      void manager.renameWorkspace(name)
+                    }}
+                  >
+                    <input
+                      id="canvas-workspace-rename"
+                      class="canvas-workspace-input"
+                      name="name"
+                      maxlength={64}
+                      value={
+                        manager.workspaces().find((workspace) => workspace.id === manager.workspaceID())?.name ?? ""
+                      }
+                      autocomplete="off"
+                      required
+                    />
+                    <button type="submit" class="canvas-workspace-form-button">
+                      Save
+                    </button>
+                  </form>
+                </div>
+              </div>
+            </details>
+            <div class="canvas-brand" aria-label="Agent Canvas">
+              <div class="canvas-brand-mark" aria-hidden="true" />
+              <div class="canvas-brand-copy">
+                <div class="canvas-brand-name">Agent Canvas</div>
+                <div class="canvas-brand-tag">A quieter place to think</div>
+              </div>
+            </div>
+            <div class="canvas-toolbar-group">
+              <div class="canvas-toolbar-picker">
+                <DirectoryPicker
+                  directories={() => manager.directories()}
+                  onUpdate={(directories) => void manager.updateDirectories(directories)}
+                />
+              </div>
+              <button type="button" class="canvas-toolbar-button" title="Tidy the board" onClick={tidyBlocks}>
+                {iconTools()}
+                <span class="label">Tidy</span>
+              </button>
+              <button type="button" class="canvas-toolbar-button" title="Reset view" onClick={resetView}>
+                {iconSpin()}
+              </button>
+              <button
+                type="button"
+                class="canvas-toolbar-button"
+                classList={{ active: state.editing }}
+                title={state.editing ? "Leave editing mode" : "Enter editing mode"}
+                onClick={() => setEditingMode(!state.editing)}
+              >
+                {iconContext()}
+                <span class="label">Edit</span>
+              </button>
+              <div class="canvas-toolbar-picker">
+                <ModelMenu
+                  main={() => manager.modelKey()}
+                  subagent={() => {
+                    const model = manager.masterAgent.coder.model()
+                    if (!model) return undefined
+                    return Workspace.ModelSelection.encode(model)
+                  }}
+                  models={modelCatalog}
+                  onSelect={(role, key) => {
+                    if (role === "main") {
+                      if (key) return manager.selectModel(key)
+                      return
+                    }
+                    if (!key) {
+                      return saveSubagentModel(null)
+                    }
+                    const model = Workspace.ModelSelection.decode(key)
+                    if (!model) return
+                    return saveSubagentModel(model)
+                  }}
+                  onRefresh={() => providers.refresh()}
+                />
+              </div>
+              <button type="button" class="canvas-toolbar-button" title="Toggle color theme" onClick={toggleTheme}>
+                {iconFiles()}
+              </button>
+              <Show when={import.meta.env.DEV}>
+                <button
+                  type="button"
+                  class="canvas-toolbar-button dev"
+                  classList={{ active: statsVisible() }}
+                  title="Toggle dev stats"
+                  aria-pressed={statsVisible()}
+                  onClick={() => setStatsVisible((value) => !value)}
+                >
+                  <span class="label">DEV</span>
+                </button>
+              </Show>
+            </div>
+            <div class="canvas-toolbar-divider" aria-hidden="true" />
+            <div id="opencode-titlebar-center" class="canvas-toolbar-center" />
+            <div id="opencode-titlebar-right" class="canvas-toolbar-right" />
+            <TitlebarSettingsButton />
+          </header>
+
+          <Show when={state.editing}>
+            <div class="canvas-block-bar-wrap">
+              <Show when={paletteOpen()}>
+                <div class="canvas-block-palette" role="listbox" aria-label="Select a block">
+                  <For each={paletteItems()}>
+                    {(item) => (
+                      <button
+                        type="button"
+                        class="canvas-palette-item"
+                        classList={{ active: selectedFunctionalityID() === item.id }}
+                        style={{ "--button-accent": item.module.accent }}
+                        role="option"
+                        aria-selected={selectedFunctionalityID() === item.id}
+                        title={item.label}
+                        onClick={() => {
+                          setSelectedFunctionalityID(item.id)
+                          setPaletteOpen(false)
+                        }}
+                      >
+                        <span class="canvas-palette-icon">{item.module.icon()}</span>
+                        <span class="canvas-palette-label">{item.label}</span>
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </Show>
+              <nav class="canvas-block-bar" aria-label="Block bar">
+                <button
+                  type="button"
+                  class="canvas-block-bar-button"
+                  classList={{ active: paletteOpen() }}
+                  data-tip="Blocks"
+                  aria-expanded={paletteOpen()}
+                  aria-haspopup="listbox"
+                  title="Select a block"
+                  onClick={() => setPaletteOpen((value) => !value)}
+                >
+                  {functionalityModule(selectedFunctionalityID()).icon()}
+                  <span class="canvas-block-bar-chevron">{iconCollapse()}</span>
+                </button>
+                <button
+                  type="button"
+                  class="canvas-block-bar-button add"
+                  data-tip="Add block"
+                  title="Add block"
+                  onClick={() => addBlock(selectedFunctionalityID())}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
+                </button>
+              </nav>
+            </div>
+          </Show>
+
+          {import.meta.env.DEV && <CanvasFps />}
+          <Show when={import.meta.env.DEV && statsVisible()}>
+            <div class="canvas-stats-overlay" aria-label="Dev stats">
+              <DebugBar inline />
+            </div>
+          </Show>
+
+          <div class="canvas-bottom-left">
+            <div class="canvas-status-pill">
+              <span class="canvas-status-dot" classList={{ "is-dirty": manager.dirty() }} />
+              Canvas workspace · {manager.connected() ? (manager.dirty() ? "syncing" : "synced") : "local"}
+            </div>
+            <div class="canvas-hint-pill">Pick a block · press + to add · drag empty space to pan</div>
+          </div>
+
+          <div class="canvas-bottom-right">
+            <div class="canvas-zoom-control" aria-label="Zoom controls">
+              <button
+                type="button"
+                class="canvas-control-button square"
+                title="Zoom out"
+                onClick={() =>
+                  setState("camera", (camera) =>
+                    zoomCamera(camera, camera.scale / 1.12, { x: size().w / 2, y: size().h / 2 }, size()),
+                  )
+                }
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M6 12h12" />
+                </svg>
+              </button>
+              <div class="canvas-zoom-value">{zoomValue()}</div>
+              <button
+                type="button"
+                class="canvas-control-button square"
+                title="Zoom in"
+                onClick={() =>
+                  setState("camera", (camera) =>
+                    zoomCamera(camera, camera.scale * 1.12, { x: size().w / 2, y: size().h / 2 }, size()),
+                  )
+                }
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 6v12M6 12h12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="canvas-toast" classList={{ show: !!toast() }} role="status" aria-live="polite">
+            {toast()}
+          </div>
+        </div>
+        <Show when={BLOCK_RUNTIME_V3}>
+          <CtxPackSelectionOverlay
+            workspaceID={manager.workspaceID}
+            workspaceEpoch={manager.workspaceEpoch}
+            create={ctxPackCreate}
+            onCreated={() => showToast(language.t("canvas.ctxpack.saved"))}
+          />
+        </Show>
+      </BlockRuntimeProvider>
+    </CtxPackDraftProvider>
+  )
+}
+
+function ContextBody() {
+  return (
+    <div class="canvas-context-content">
+      <div class="canvas-section-label">Current direction</div>
+      <div class="canvas-chip-row">
+        <span class="canvas-chip">
+          <span class="canvas-chip-dot" style={{ "--chip-color": "var(--canvas-purple)" }} />
+          Canvas-first
+        </span>
+        <span class="canvas-chip">
+          <span class="canvas-chip-dot" style={{ "--chip-color": "var(--canvas-mint)" }} />
+          No wires
+        </span>
+        <span class="canvas-chip">
+          <span class="canvas-chip-dot" style={{ "--chip-color": "var(--canvas-pink)" }} />
+          Friendly
+        </span>
+      </div>
+      <div class="canvas-section-label">Remember</div>
+      <div class="canvas-fact-list">
+        <div class="canvas-fact">
+          <div class="canvas-fact-number">1</div>
+          <div>
+            <strong>Everything is a block</strong>
+            <span>Chat, files, voice, context, and tools share one visual language.</span>
+          </div>
+        </div>
+        <div class="canvas-fact">
+          <div class="canvas-fact-number">2</div>
+          <div>
+            <strong>Space carries meaning</strong>
+            <span>Nearby blocks feel related without drawing explicit connections.</span>
+          </div>
+        </div>
+        <div class="canvas-fact">
+          <div class="canvas-fact-number">3</div>
+          <div>
+            <strong>Motion stays quiet</strong>
+            <span>Animate state changes, not decoration.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ToolsBody() {
+  return (
+    <div class="canvas-tool-list">
+      <div class="canvas-tool-row">
+        <div class="canvas-tool-state" style={{ "--tool-color": "var(--canvas-green)" }}>
+          {iconCheck()}
+        </div>
+        <div>
+          <div class="canvas-tool-name">Read project context</div>
+          <div class="canvas-tool-detail">12 files indexed</div>
+        </div>
+        <div class="canvas-tool-time">0.18s</div>
+      </div>
+      <div class="canvas-tool-row">
+        <div class="canvas-tool-state" style={{ "--tool-color": "var(--canvas-green)" }}>
+          {iconCheck()}
+        </div>
+        <div>
+          <div class="canvas-tool-name">Search codebase</div>
+          <div class="canvas-tool-detail">query: canvas modules</div>
+        </div>
+        <div class="canvas-tool-time">0.42s</div>
+      </div>
+      <div class="canvas-tool-row">
+        <div class="canvas-tool-state" style={{ "--tool-color": "var(--canvas-blue)" }}>
+          {iconSpin()}
+        </div>
+        <div>
+          <div class="canvas-tool-name">Generate interface</div>
+          <div class="canvas-tool-detail">streaming preview…</div>
+        </div>
+        <div class="canvas-tool-time">live</div>
+      </div>
+      <div class="canvas-tool-row">
+        <div class="canvas-tool-state" style={{ "--tool-color": "var(--canvas-yellow)" }}>
+          {iconFile()}
+        </div>
+        <div>
+          <div class="canvas-tool-name">Write artifact</div>
+          <div class="canvas-tool-detail">agent_canvas_demo.html</div>
+        </div>
+        <div class="canvas-tool-time">queued</div>
+      </div>
+    </div>
+  )
+}
+
+const FILE_ITEMS = [
+  { name: "src", folder: true, nested: false, active: false },
+  { name: "canvas.tsx", folder: false, nested: true, active: true },
+  { name: "module-card.tsx", folder: false, nested: true, active: false },
+  { name: "workspace-store.ts", folder: false, nested: true, active: false },
+  { name: "public", folder: true, nested: false, active: false },
+  { name: "icons.svg", folder: false, nested: true, active: false },
+  { name: "package.json", folder: false, nested: false, active: false },
+  { name: "README.md", folder: false, nested: false, active: false },
+]
+
+function FilesBody() {
+  return (
+    <div class="canvas-file-layout">
+      <div class="canvas-search-wrap">
+        <label class="canvas-search-box">
+          {iconSearch()}
+          <input
+            aria-label="Filter files"
+            placeholder="Filter files"
+            onInput={(event) => {
+              const query = event.currentTarget.value.toLowerCase().trim()
+              const tree = event.currentTarget.closest(".canvas-file-layout")?.querySelector(".canvas-file-tree")
+              tree?.querySelectorAll("[data-file-name]").forEach((item) => {
+                ;(item as HTMLElement).style.display = item
+                  .getAttribute("data-file-name")
+                  ?.toLowerCase()
+                  .includes(query)
+                  ? "flex"
+                  : "none"
+              })
+            }}
+          />
+        </label>
+      </div>
+      <div class="canvas-file-tree">
+        <For each={FILE_ITEMS}>
+          {(item) => (
+            <div
+              class="canvas-file-item"
+              classList={{ nested: item.nested, active: item.active }}
+              data-file-name={item.name}
+            >
+              {item.folder ? iconFolder() : iconFile()}
+              <span>{item.name}</span>
+            </div>
+          )}
+        </For>
+      </div>
+    </div>
+  )
+}
+
+function VoiceBody(props: { block: CanvasBlock; setState: SetStoreFunction<CanvasState> }) {
+  return (
+    <div class="canvas-voice-content">
+      <button
+        class="canvas-orb"
+        classList={{ listening: localViewStore.read<{ listening?: boolean }>(props.block.id)?.listening ?? false }}
+        type="button"
+        aria-label="Toggle listening"
+        onClick={() => {
+          const current = localViewStore.read<{ listening?: boolean }>(props.block.id)?.listening ?? false
+          localViewStore.write(props.block.id, { listening: !current })
+        }}
+      >
+        {iconMic()}
+      </button>
+      <div class="canvas-waveform" aria-hidden="true">
+        <i />
+        <i />
+        <i />
+        <i />
+        <i />
+        <i />
+        <i />
+      </div>
+      <div>
+        <div class="canvas-voice-title">
+          {localViewStore.read<{ listening?: boolean }>(props.block.id)?.listening ? "Listening…" : "Tap to speak"}
+        </div>
+        <div class="canvas-voice-note">Local voice capture can live here as a modular input surface.</div>
+      </div>
+    </div>
+  )
+}
+
+// Workspace model configuration. The popup is portaled to the body so it
+// escapes the toolbar's overflow clipping.
+export { createModelRefreshState } from "./model-refresh-action"
+
+function ModelMenu(props: {
+  main: () => string | undefined
+  subagent: () => string | undefined
+  models: () => readonly CanvasModelCatalogItem[]
+  onSelect: (role: CanvasModelRole, key: string | undefined) => Promise<void> | void
+  onRefresh: () => Promise<unknown>
+}) {
+  const language = useLanguage()
+  const [state, setState] = createStore<{
+    open: boolean
+    activeRole: CanvasModelRole | undefined
+    search: string
+    pop: { top: number; left: number; maxHeight: number } | undefined
+  }>({
+    open: false,
+    activeRole: "main",
+    search: "",
+    pop: undefined,
+  })
+  const refreshState = createModelRefreshState(props.onRefresh)
+  const menuID = createUniqueId()
+  let rootRef: HTMLDivElement | undefined
+  let popRef: HTMLDivElement | undefined
+  let triggerRef: HTMLButtonElement | undefined
+  let searchRef: HTMLInputElement | undefined
+  const open = () => state.open
+  const activeRole = () => state.activeRole
+  const search = () => state.search
+  const pop = () => state.pop
+  const items = createMemo(() => {
+    const query = search().trim().toLowerCase()
+    if (!query) return props.models()
+    return props
+      .models()
+      .filter((item) =>
+        `${item.providerName} ${item.modelName} ${item.providerID} ${item.modelID}`.toLowerCase().includes(query),
+      )
+  })
+
+  const roleLabel = (role: CanvasModelRole) =>
+    language.t(role === "main" ? "canvas.model.main" : "canvas.model.subagent")
+
+  const current = (role: CanvasModelRole) => (role === "main" ? props.main() : props.subagent())
+  const mainSelection = createMemo(() => resolveCanvasModelSelection(props.main(), props.models()))
+  const subagentSelection = createMemo(() => resolveCanvasModelSelection(props.subagent(), props.models()))
+  const selection = (role: CanvasModelRole) => (role === "main" ? mainSelection() : subagentSelection())
+  const mainModel = createMemo(() => props.models().find((item) => item.key === mainSelection().key))
+  const subagentModel = createMemo(() => props.models().find((item) => item.key === subagentSelection().key))
+  const selectedModel = (role: CanvasModelRole) => (role === "main" ? mainModel() : subagentModel())
+
+  const effortOptions = (role: CanvasModelRole) => {
+    const variants = selectedModel(role)?.variants ?? []
+    const variant = selection(role).variant
+    if (!variant || variants.includes(variant)) return variants
+    return [variant, ...variants]
+  }
+
+  const currentLabel = (role: CanvasModelRole) => {
+    const value = current(role)
+    if (!value) return language.t(role === "main" ? "common.default" : "mcp.status.disabled")
+    return selectedModel(role)?.modelName ?? value
+  }
+
+  const close = (restoreFocus = false) => {
+    setState("open", false)
+    setState("activeRole", "main")
+    setState("search", "")
+    if (restoreFocus) queueMicrotask(() => triggerRef?.focus())
+  }
+
+  const toggle = () => {
+    if (open()) {
+      close()
+      return
+    }
+    const trigger = triggerRef
+    if (!trigger) return
+    const rect = trigger.getBoundingClientRect()
+    const width = Math.min(392, window.innerWidth - 16)
+    const top = rect.bottom + 8
+    setState("pop", {
+      top,
+      left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
+      maxHeight: Math.max(0, window.innerHeight - top - 8),
+    })
+    setState("search", "")
+    setState("activeRole", "main")
+    setState("open", true)
+    queueMicrotask(() =>
+      popRef?.querySelector<HTMLButtonElement>('[data-model-role="main"] .canvas-model-picker-role-trigger')?.focus(),
+    )
+  }
+
+  const toggleRole = (role: CanvasModelRole) => {
+    const next = activeRole() === role ? undefined : role
+    setState("activeRole", next)
+    setState("search", "")
+    if (!next) return
+    queueMicrotask(() => searchRef?.focus())
+  }
+
+  const selectModel = (role: CanvasModelRole, item: CanvasModelCatalogItem) => {
+    const variant = selection(role).variant
+    const key = Workspace.ModelSelection.encode({
+      providerID: item.providerID,
+      modelID: item.modelID,
+      ...(variant && item.variants.includes(variant) ? { variant } : {}),
+    })
+    setState("search", "")
+    applySelection(role, key)
+  }
+
+  const selectEffort = (role: CanvasModelRole, variant: string) => {
+    const model = Workspace.ModelSelection.decode(selection(role).key)
+    if (!model) return
+    applySelection(role, Workspace.ModelSelection.encode({ ...model, ...(variant ? { variant } : {}) }))
+  }
+
+  const applySelection = (role: CanvasModelRole, key: string | undefined) => {
+    void Promise.resolve(props.onSelect(role, key)).catch(() => undefined)
+  }
+
+  const refreshModels = async () => {
+    await refreshState.refresh()
+    if (refreshState.refreshError()) return
+    CANVAS_MODEL_ROLES.forEach((role) => {
+      const value = selection(role)
+      const model = selectedModel(role)
+      if (!value.key || !model) return
+      const base = Workspace.ModelSelection.decode(value.key)
+      if (!base) return
+      const key = Workspace.ModelSelection.encode({
+        ...base,
+        ...(value.variant && model.variants.includes(value.variant) ? { variant: value.variant } : {}),
+      })
+      if (key === current(role)) return
+      applySelection(role, key)
+    })
+  }
+
+  const moveOptionFocus = (event: KeyboardEvent) => {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return
+    const options = [...(popRef?.querySelectorAll<HTMLButtonElement>(".canvas-model-picker-item") ?? [])].filter(
+      (item) => !item.hidden,
+    )
+    if (options.length === 0) return
+    event.preventDefault()
+    const index = options.findIndex((option) => option === document.activeElement)
+    const next =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? options.length - 1
+          : event.key === "ArrowDown"
+            ? Math.min(index + 1, options.length - 1)
+            : Math.max(index < 0 ? options.length - 1 : index - 1, 0)
+    options[next]?.focus()
+  }
+
+  trackCleanup(
+    makeEventListener(window, "pointerdown", (event: PointerEvent) => {
+      if (!open()) return
+      const target = event.target as HTMLElement
+      if (rootRef?.contains(target) || popRef?.contains(target)) return
+      close()
+    }),
+  )
+
+  // Close on scrolls OUTSIDE the popup only: the model list itself is
+  // scrollable, and its scroll events (including scrollbar drags/clicks)
+  // reach this capture-phase listener — closing then made the expanded
+  // menu collapse on the first scroll or scrollbar interaction.
+  trackCleanup(
+    makeEventListener(
+      window,
+      "scroll",
+      (event: Event) => {
+        if (!open()) return
+        const target = event.target as HTMLElement | null
+        if (target && popRef?.contains(target)) return
+        close()
+      },
+      { capture: true },
+    ),
+  )
+
+  trackCleanup(
+    makeEventListener(window, "keydown", (event: KeyboardEvent) => {
+      if (!open() || event.key !== "Escape") return
+      event.preventDefault()
+      close(true)
+    }),
+  )
+
+  trackCleanup(
+    makeEventListener(window, "resize", () => {
+      if (open()) close()
+    }),
+  )
+
+  return (
+    <div class="canvas-model-picker" ref={(element) => (rootRef = element)}>
+      <button
+        ref={(element) => (triggerRef = element)}
+        type="button"
+        class="canvas-model-picker-trigger"
+        classList={{ active: open() }}
+        aria-expanded={open()}
+        aria-haspopup="dialog"
+        title={language.t("settings.models.title")}
+        onClick={toggle}
+      >
+        <span class="canvas-model-picker-label">{language.t("settings.models.title")}</span>
+        <span class="canvas-model-picker-chevron">{iconCollapse()}</span>
+      </button>
+      <Show when={open()}>
+        <Portal>
+          <div
+            class="canvas-model-picker-pop"
+            role="dialog"
+            aria-label={language.t("settings.models.title")}
+            ref={(element) => (popRef = element)}
+            style={{
+              top: `${pop()?.top ?? 0}px`,
+              left: `${pop()?.left ?? 0}px`,
+              "max-height": `${pop()?.maxHeight ?? 0}px`,
+            }}
+          >
+            <For each={CANVAS_MODEL_ROLES}>
+              {(role) => (
+                <section class="canvas-model-picker-role" data-model-role={role}>
+                  <div class="canvas-model-picker-role-row">
+                    <button
+                      type="button"
+                      class="canvas-model-picker-role-trigger"
+                      aria-label={language.t("canvas.model.picker.ariaLabel", { label: roleLabel(role) })}
+                      aria-expanded={activeRole() === role}
+                      aria-controls={`${menuID}-options`}
+                      onClick={() => toggleRole(role)}
+                    >
+                      <span id={`${menuID}-${role}-label`} class="canvas-model-picker-role-label">
+                        {roleLabel(role)}
+                      </span>
+                      <span class="canvas-model-picker-current">{currentLabel(role)}</span>
+                      <span class="canvas-model-picker-chevron" classList={{ expanded: activeRole() === role }}>
+                        {iconCollapse()}
+                      </span>
+                    </button>
+                    <label class="canvas-model-effort-field" hidden={!selectedModel(role)}>
+                      <span id={`${menuID}-${role}-effort`} class="canvas-model-effort-label">
+                        {language.t("canvas.chat.relay.effort")}
+                      </span>
+                      <select
+                        class="canvas-model-effort"
+                        data-model-effort={role}
+                        aria-labelledby={`${menuID}-${role}-label ${menuID}-${role}-effort`}
+                        disabled={effortOptions(role).length === 0}
+                        value={selection(role).variant ?? ""}
+                        onChange={(event) => selectEffort(role, event.currentTarget.value)}
+                      >
+                        <option value="">{language.t("common.default")}</option>
+                        <For each={effortOptions(role)}>{(variant) => <option value={variant}>{variant}</option>}</For>
+                      </select>
+                    </label>
+                  </div>
+                </section>
+              )}
+            </For>
+            <div id={`${menuID}-options`} class="canvas-model-picker-options" hidden={activeRole() === undefined}>
+              <input
+                ref={(element) => (searchRef = element)}
+                class="canvas-model-picker-search"
+                aria-label={language.t("dialog.model.search.placeholder")}
+                placeholder={language.t("dialog.model.search.placeholder")}
+                value={search()}
+                onInput={(event) => setState("search", event.currentTarget.value)}
+              />
+              <div
+                class="canvas-model-picker-list"
+                role="listbox"
+                aria-label={language.t("canvas.model.picker.ariaLabel", {
+                  label: roleLabel(activeRole() ?? "main"),
+                })}
+                onKeyDown={moveOptionFocus}
+              >
+                <button
+                  type="button"
+                  class="canvas-model-picker-item canvas-model-picker-disabled"
+                  classList={{ active: current("subagent") === undefined }}
+                  hidden={activeRole() !== "subagent"}
+                  role="option"
+                  aria-selected={current("subagent") === undefined}
+                  onClick={() => applySelection("subagent", undefined)}
+                >
+                  <span class="canvas-model-picker-name">{language.t("mcp.status.disabled")}</span>
+                </button>
+                <For each={items()}>
+                  {(item) => (
+                    <button
+                      type="button"
+                      class="canvas-model-picker-item"
+                      classList={{ active: item.key === selection(activeRole() ?? "main").key }}
+                      data-model-key={item.key}
+                      role="option"
+                      aria-selected={item.key === selection(activeRole() ?? "main").key}
+                      onClick={() => {
+                        const role = activeRole()
+                        if (role) selectModel(role, item)
+                      }}
+                    >
+                      <span class="canvas-model-picker-name">{item.modelName}</span>
+                      <span class="canvas-model-picker-provider">{item.providerName}</span>
+                    </button>
+                  )}
+                </For>
+                <Show when={items().length === 0}>
+                  <div class="canvas-model-picker-empty">{language.t("dialog.model.empty")}</div>
+                </Show>
+              </div>
+            </div>
+            <ModelRefreshAction
+              refreshing={refreshState.refreshing}
+              refreshError={refreshState.refreshError}
+              onRefresh={() => void refreshModels()}
+              t={language.t}
+            />
+          </div>
+        </Portal>
+      </Show>
+    </div>
+  )
+}
+
+// Working-directories picker: lists the workspace's project directories
+// (FR-2) and supports adding/removing paths. The first directory is the
+// workspace's primary directory (chat blocks bind to it). Updates flow
+// through the manager's optimistic server patch; the popup keeps the same
+// portal + outside-close semantics as the model picker, including the
+// internal-scroll guard so scrolling its own list never collapses it.
+function DirectoryPicker(props: {
+  directories?: () => string[] | undefined
+  onUpdate: (directories: string[]) => void
+}) {
+  const [open, setOpen] = createSignal(false)
+  const [draft, setDraft] = createSignal("")
+  const [pop, setPop] = createSignal<{ top: number; left: number }>()
+  let rootRef: HTMLDivElement | undefined
+  let popRef: HTMLDivElement | undefined
+
+  const directories = () => props.directories?.() ?? []
+
+  const toggle = () => {
+    if (open()) {
+      setOpen(false)
+      return
+    }
+    const trigger = rootRef?.querySelector(".canvas-directory-picker-trigger")
+    if (!trigger) return
+    const rect = trigger.getBoundingClientRect()
+    setPop({ top: rect.bottom + 8, left: rect.left })
+    setOpen(true)
+  }
+
+  trackCleanup(
+    makeEventListener(window, "pointerdown", (event: PointerEvent) => {
+      if (!open()) return
+      const target = event.target as HTMLElement
+      if (rootRef?.contains(target) || popRef?.contains(target)) return
+      setOpen(false)
+    }),
+  )
+
+  trackCleanup(
+    makeEventListener(
+      window,
+      "scroll",
+      (event: Event) => {
+        if (!open()) return
+        const target = event.target as HTMLElement | null
+        if (target && popRef?.contains(target)) return
+        setOpen(false)
+      },
+      { capture: true },
+    ),
+  )
+
+  const add = () => {
+    const value = draft().trim()
+    if (!value || directories().includes(value)) return
+    props.onUpdate([...directories(), value])
+    setDraft("")
+  }
+
+  return (
+    <div class="canvas-directory-picker" ref={(element) => (rootRef = element)}>
+      <button
+        type="button"
+        class="canvas-directory-picker-trigger"
+        classList={{ active: open() }}
+        aria-expanded={open()}
+        aria-haspopup="dialog"
+        title="Configure workspace working directories"
+        onClick={toggle}
+      >
+        {iconFolder()}
+        <span class="canvas-directory-picker-label">Directories</span>
+        <span class="canvas-directory-picker-count">{directories().length}</span>
+        <span class="canvas-model-picker-chevron">{iconCollapse()}</span>
+      </button>
+      <Show when={open()}>
+        <Portal>
+          <div
+            class="canvas-directory-picker-pop"
+            ref={(element) => (popRef = element)}
+            style={{ top: `${pop()?.top ?? 0}px`, left: `${pop()?.left ?? 0}px` }}
+          >
+            <div class="canvas-directory-picker-head">Working directories · first is primary</div>
+            <div class="canvas-directory-picker-list" role="list">
+              <For each={directories()}>
+                {(directory, index) => (
+                  <div class="canvas-directory-picker-item" role="listitem">
+                    <span class="canvas-directory-picker-path" title={directory}>
+                      {index() === 0 ? `${directory} · primary` : directory}
+                    </span>
+                    <button
+                      type="button"
+                      class="canvas-directory-picker-remove"
+                      aria-label={`Remove ${directory}`}
+                      title={`Remove ${directory}`}
+                      onClick={() => props.onUpdate(directories().filter((_, i) => i !== index()))}
+                    >
+                      {iconClose()}
+                    </button>
+                  </div>
+                )}
+              </For>
+              <Show when={directories().length === 0}>
+                <div class="canvas-directory-picker-empty">No directories yet</div>
+              </Show>
+            </div>
+            <form
+              class="canvas-directory-picker-add"
+              onSubmit={(event) => {
+                event.preventDefault()
+                add()
+              }}
+            >
+              <input
+                class="canvas-directory-picker-input"
+                aria-label="Add working directory path"
+                placeholder="Add a directory path…"
+                value={draft()}
+                onInput={(event) => setDraft(event.currentTarget.value)}
+              />
+              <button type="submit" class="canvas-directory-picker-add-button" disabled={!draft().trim()}>
+                Add
+              </button>
+            </form>
+          </div>
+        </Portal>
+      </Show>
+    </div>
+  )
+}
+
+export function OperatingChatBody(props: {
+  block: CanvasBlock
+  modelVersion: number
+  beforeSubmit?: (runtime: RuntimeBlockHandle | undefined, sessionID: string) => Promise<void>
+  focused: boolean
+  onFocus: () => void
+}) {
+  const language = useLanguage()
+  const handle = useBlockRuntimeHandle()
+  const runtimeView = (): OperatingChatView | undefined => handle?.view() as OperatingChatView | undefined
+  const [resetPending, setResetPending] = createSignal(false)
+  const [resetError, setResetError] = createSignal<string>()
+  let modelVersion = props.modelVersion
+
+  createEffect(() => {
+    const next = props.modelVersion
+    if (next === modelVersion) return
+    modelVersion = next
+    void handle?.refresh("workspace-model-changed")
+  })
+
+  const reset = async () => {
+    if (resetPending() || !handle) return
+    setResetPending(true)
+    setResetError(undefined)
+    try {
+      await handle.dispatch({ type: "reset" })
+    } catch (cause) {
+      setResetError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setResetPending(false)
+    }
+  }
+
+  return (
+    <div class="canvas-operating-layout">
+      <div class="canvas-operating-actions">
+        <button
+          type="button"
+          class="canvas-toolbar-button"
+          aria-label={language.t("canvas.operatingAgent.reset")}
+          title={language.t("canvas.operatingAgent.reset")}
+          disabled={resetPending()}
+          onClick={() => void reset()}
+        >
+          {language.t("canvas.session.reset")}
+        </button>
+      </div>
+      {
+        (() => (
+          <Show when={resetError()}>
+            {(error) => (
+              <div class="canvas-operating-error" role="alert">
+                {language.t("canvas.session.reset.error", { error: error() })}
+              </div>
+            )}
+          </Show>
+        )) as unknown as JSX.Element
+      }
+      <Show
+        when={runtimeView()}
+        fallback={
+          <div class="canvas-relay-state" classList={{ error: handle?.status() === "error" }}>
+            <div>
+              {handle?.status() === "resolving"
+                ? language.t("canvas.operatingAgent.starting")
+                : language.t("canvas.operatingAgent.unavailable")}
+            </div>
+            <Show when={handle?.status() === "error" || handle?.status() === "unavailable"}>
+              <button type="button" onClick={() => void handle?.refresh("retry")}>
+                {language.t("canvas.operatingAgent.retry")}
+              </button>
+            </Show>
+          </div>
+        }
+      >
+        {(view) => (
+          <CanvasSessionSurfaceProviders directory={view().directory} sessionID={view().sessionID}>
+            <CanvasSessionSurface
+              role="operating"
+              workspaceModels
+              beforeSubmit={() => props.beforeSubmit?.(handle, view().sessionID) ?? Promise.resolve()}
+              target={{
+                sessionID: view().sessionID,
+                directory: view().directory,
+                workspaceID: view().workspaceID,
+                contextTarget: {
+                  instanceID: view().functionalityInstanceID,
+                  functionalityID: "builtin:operating-chat-session",
+                },
+              }}
+              surfaceID={`operating-chat-${props.block.id}`}
+              focused={props.focused}
+              queueEnabled={view().queueEnabled}
+              onFocus={props.onFocus}
+            />
+          </CanvasSessionSurfaceProviders>
+        )}
+      </Show>
+    </div>
+  )
+}

@@ -1,0 +1,1189 @@
+// Canvas communication manager: the subsystem that talks to the backend on
+// behalf of the standalone canvas UI. The UI owns rendering and local
+// interactions (client-authoritative); everything the backend owns — the
+// workspace layout, its revision and authority, the OperatingAgent model, and
+// the project permission config — is fetched, pushed, and updated here, then
+// handed to the UI through callbacks and reactive signals.
+
+import { useServerSDK, type ServerSDK } from "@/context/server-sdk"
+import { createEffect, createRoot, createSignal, type Accessor } from "solid-js"
+import type {
+  PermissionAction,
+  PermissionConfig,
+  WorkspaceBlockRecord,
+  WorkspaceFunctionalityInfo,
+  WorkspaceLayoutInfo,
+  WorkspaceLayoutTuple,
+} from "@opencode-ai/sdk/v2/client"
+import type { createSdkForServer } from "@/utils/server"
+import { Workspace } from "@opencode-ai/schema/workspace"
+import {
+  createCoderController,
+  type CoderController,
+  type CoderControllerHost,
+  type CoderTaskPermission,
+} from "./master-agent/coder-controller"
+import { createMasterAgentEventReconciliation } from "./master-agent/event-reconciliation"
+import {
+  MASTER_AGENT_FUNCTIONALITY_ID,
+  MASTER_AGENT_MODULE,
+  type MasterAgentBlockModule,
+} from "./master-agent/functionality"
+import {
+  createMasterAgentLifecycleController,
+  type MasterAgentLifecycleController,
+} from "./master-agent/lifecycle-controller"
+import { createMasterAgentPort } from "./master-agent/port"
+import { createMasterAgentSdkPort } from "./master-agent/sdk-port"
+import type { BindingState, MasterAgentPort, ModelSelection } from "./master-agent/types"
+
+export interface CanvasManagerInput {
+  clientID: string
+  directory: () => string | undefined
+  isMobile: () => boolean
+  /** Serialize the UI's local blocks for a layout push. */
+  getRecords: () => WorkspaceBlockRecord[]
+  /** The backend handed the UI a layout; the UI applies it to its blocks. */
+  onServerLayout: (layout: WorkspaceLayoutInfo) => void
+  /** Whether the UI currently has local (non-legacy) blocks. */
+  hasLocalBlocks: () => boolean
+  notify: (message: string) => void
+  /** M5 sdk-port factory: maps G1's generated master-agent endpoints and the
+   * workspace coderModel patch/read onto the M1 client port. Defaults to the
+   * M5 composition (createMasterAgentPort(createMasterAgentSdkPort(client)));
+   * hosts may override for tests or alternative transports. */
+  masterAgentPort?: MasterAgentPortFactory
+  /** Client-side availability gate for the workspace Coder model; the host
+   * re-validates server-side. Defaults to always available. */
+  isCoderModelAvailable?: (model: ModelSelection) => boolean
+  /** Test seam: overrides the ServerSDK context accessor. */
+  serverSDK?: Accessor<ServerSDK>
+  /** Optional host-level cleanup when the workspace ID becomes invalid (eg. stale/removed backend row). */
+  onWorkspaceInvalidated?: () => void
+  /** The generic runtime host owns per-block binding refresh and events. */
+  runtimeHostBindings?: boolean
+}
+
+/** M5's sdk-port factory shape (spec 02 §11). */
+export type MasterAgentPortFactory = (client: ReturnType<typeof createSdkForServer>) => MasterAgentPort
+
+export interface CanvasWorkspaceOption {
+  id: string
+  name: string
+}
+
+const WORKSPACE_STORAGE_KEY = "opencode.canvas.workspaceID.v1"
+
+/** Narrow MasterAgent surface consumed by B3 (spec 02 §12). Owns binding and
+ * workspace Coder configuration communication only; Session messages, prompt
+ * admission, queue projection, terminal, files, and review state stay in the
+ * existing Session subsystems. */
+export interface MasterAgentManagerApi {
+  state(blockID: string): Accessor<BindingState>
+  ensure(blockID: string): Promise<void>
+  retry(blockID: string): Promise<void>
+  reset(blockID: string): Promise<void>
+  removeLocalProjection(blockID: string): void
+  coder: CoderController<ModelSelection>
+  /** The master-agent functionality descriptor (block type/module metadata). */
+  descriptor: MasterAgentBlockModule
+}
+
+export interface CanvasManager {
+  workspaceID: () => string | undefined
+  workspaces: () => readonly CanvasWorkspaceOption[]
+  revision: () => number | undefined
+  workspaceEpoch: () => number
+  connected: () => boolean
+  dirty: () => boolean
+  modelKey: () => string | undefined
+  modelVersion: () => number
+  modelIntent: () => number
+  waitForModelSelection: () => Promise<void>
+  directories: () => string[] | undefined
+  configPermission: () => PermissionConfig | undefined
+  functionalities: () => readonly WorkspaceFunctionalityInfo[]
+  /** The UI edited blocks; the manager decides dirty vs local-authoritative. */
+  noteLocalEdit: () => void
+  connect: () => Promise<void>
+  refresh: () => Promise<WorkspaceLayoutInfo | undefined>
+  createWorkspace: (name: string) => Promise<void>
+  switchWorkspace: (id: string) => Promise<void>
+  renameWorkspace: (name: string) => Promise<void>
+  sync: () => Promise<void>
+  awaitDescriptorPersisted: (blockID: string, signal: AbortSignal) => Promise<void>
+  recoverWorkspace: (error: unknown) => Promise<boolean>
+  selectModel: (key: string) => Promise<void>
+  updateDirectories: (directories: string[]) => Promise<void>
+  loadConfig: () => Promise<void>
+  masterAgent: MasterAgentManagerApi
+  start: () => void
+  dispose: () => void
+}
+
+// A layout whose only block is the canonical 4x4 default chat block means the
+// server has never received a user arrangement.
+export function isPristineDefault(layout: WorkspaceLayoutInfo) {
+  const only = layout.blocks.length === 1 ? layout.blocks[0] : undefined
+  return only !== undefined && only.functionality === "builtin:chat" && only.transform.w === 4 && only.transform.h === 4
+}
+
+export function createCanvasManager(input: CanvasManagerInput): CanvasManager {
+  const serverSDK = input.serverSDK ?? useServerSDK()
+  const [workspaceID, setWorkspaceID] = createSignal<string>()
+  const [workspaces, setWorkspaces] = createSignal<readonly CanvasWorkspaceOption[]>([])
+  const [revision, setRevision] = createSignal<number>()
+  const [workspaceEpoch, setWorkspaceEpoch] = createSignal(0)
+  const [connected, setConnected] = createSignal(false)
+  const [dirty, setDirty] = createSignal(false)
+  const [modelVersion, setModelVersion] = createSignal(0)
+  const [modelKey, setModelKey] = createSignal<string>()
+  const [directories, setDirectories] = createSignal<string[]>()
+  const [configPermission, setConfigPermission] = createSignal<PermissionConfig>()
+  const [functionalities, setFunctionalities] = createSignal<readonly WorkspaceFunctionalityInfo[]>([])
+
+  let tupleCache: WorkspaceLayoutTuple | undefined
+  let workspaceActivation: { workspaceEpoch: number; promise: Promise<unknown> } | undefined
+  let syncInFlight: Promise<void> | undefined
+  let refreshInFlight: Promise<WorkspaceLayoutInfo | undefined> | undefined
+  let refreshGeneration = 0
+  let layoutRefreshPending: { workspaceID: string; workspaceEpoch: number } | undefined
+  let layoutRefreshTask: Promise<void> | undefined
+  let localEditVersion = 0
+  let retryTimer: ReturnType<typeof setTimeout> | undefined
+  let configUnsubscribe: (() => void) | undefined
+  let layoutUnsubscribe: (() => void) | undefined
+  let started = false
+  let workspaceRecoveryInFlight:
+    | { workspaceEpoch: number; promise: Promise<{ workspaceID: string; workspaceEpoch: number } | undefined> }
+    | undefined
+  let modelMutation = 0
+  let modelIntent = 0
+  let confirmedModel: string | undefined
+  let modelSave: Promise<void> | undefined
+  const persistedBlockIDs = new Set<string>()
+  const descriptorWaiters = new Map<string, Set<() => void>>()
+
+  // MasterAgent domain state (M6): per-block lifecycle controllers, the
+  // binding-event reconciliation, and the workspace-wide Coder controller.
+  // The host owns the authoritative binding and Coder model; this manager
+  // owns only client projections. Layout serialization, localStorage, and
+  // IndexedDB never carry binding/session/queue state (spec 02 §1-2).
+  const [coderModelValue, setCoderModelValue] = createSignal<ModelSelection | null>(null)
+  const controllers = new Map<string, MasterAgentLifecycleController>()
+  const reconnectListeners = new Set<() => void>()
+  let port: MasterAgentPort | undefined
+  let coderController: CoderControllerHost<ModelSelection> | undefined
+  let hasConnectedOnce = false
+  let disposed = false
+
+  // The layout tuple is fixed for the lifetime of the client session: the
+  // server resolves/stores one layout per (user, style, deviceClass).
+  function layoutTuple(): WorkspaceLayoutTuple {
+    tupleCache ??= { user: "", style: "default", deviceClass: input.isMobile() ? "mobile" : "desktop" }
+    return tupleCache
+  }
+
+  function trackWorkspaceActivation<T>(expectedWorkspaceEpoch: number, operation: Promise<T>) {
+    const promise = operation.finally(() => {
+      if (workspaceActivation?.promise === promise) workspaceActivation = undefined
+    })
+    workspaceActivation = { workspaceEpoch: expectedWorkspaceEpoch, promise }
+    return promise
+  }
+
+  async function ensureWorkspace(options: { force?: boolean; expectedWorkspaceEpoch?: number } = {}) {
+    const expectedWorkspaceEpoch = options.expectedWorkspaceEpoch ?? workspaceEpoch()
+    const current = workspaceID()
+    if (!options.force && current) return current
+    const client = serverSDK().client
+    const list = await client.v2.workspace.list({ throwOnError: true })
+    if (disposed || workspaceEpoch() !== expectedWorkspaceEpoch) return
+    const existingDefault = list.data.find((workspace) => workspace.name === "Default")
+    const defaultWorkspace =
+      existingDefault ?? (await client.v2.workspace.create({ name: "Default" }, { throwOnError: true })).data
+    if (disposed || workspaceEpoch() !== expectedWorkspaceEpoch) return
+    const available = existingDefault ? list.data : [defaultWorkspace, ...list.data]
+    const persisted = readPersistedWorkspaceID()
+    const selected = available.find((workspace) => workspace.id === persisted) ?? defaultWorkspace
+    setWorkspaces(available.map((workspace) => ({ id: workspace.id, name: workspace.name })))
+    setWorkspaceID(selected.id)
+    persistWorkspaceID(selected.id)
+    return selected.id
+  }
+
+  function clearWorkspace() {
+    refreshGeneration++
+    setWorkspaceID(undefined)
+    setWorkspaces([])
+    setRevision(undefined)
+    setConnected(false)
+    setFunctionalities([])
+    persistedBlockIDs.clear()
+    clearPersistedWorkspaceID()
+    input.onWorkspaceInvalidated?.()
+    setWorkspaceEpoch((value) => value + 1)
+  }
+
+  function readPersistedWorkspaceID(): string | undefined {
+    try {
+      return localStorage.getItem(WORKSPACE_STORAGE_KEY) ?? undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  function persistWorkspaceID(id: string) {
+    try {
+      localStorage.setItem(WORKSPACE_STORAGE_KEY, id)
+    } catch {
+      /* localStorage can be unavailable in private contexts */
+    }
+  }
+
+  function clearPersistedWorkspaceID() {
+    try {
+      localStorage.removeItem(WORKSPACE_STORAGE_KEY)
+    } catch {
+      /* localStorage can be unavailable in private contexts */
+    }
+  }
+
+  function isWorkspaceDeleted(error: unknown) {
+    if (!isRecord(error)) return false
+    if (error.type === "workspace-not-found") return true
+    const cause = isRecord(error.cause) ? error.cause : undefined
+    if (typeof cause?.body === "string") return cause.body.startsWith("Workspace not found: ")
+    const body = cause && isRecord(cause.body) ? cause.body : error
+    return typeof body._tag === "string" && body._tag.endsWith("WorkspaceNotFoundError")
+  }
+
+  function markDescriptorsPersisted(blocks: readonly WorkspaceBlockRecord[], replace = false) {
+    if (replace) persistedBlockIDs.clear()
+    for (const block of blocks) {
+      persistedBlockIDs.add(block.id)
+      const waiters = descriptorWaiters.get(block.id)
+      if (!waiters) continue
+      descriptorWaiters.delete(block.id)
+      for (const resolve of waiters) resolve()
+    }
+  }
+
+  function awaitDescriptorPersisted(blockID: string, signal: AbortSignal): Promise<void> {
+    if (signal.aborted || persistedBlockIDs.has(blockID)) return Promise.resolve()
+    return new Promise((resolve) => {
+      const done = () => {
+        signal.removeEventListener("abort", done)
+        const waiters = descriptorWaiters.get(blockID)
+        waiters?.delete(done)
+        if (waiters?.size === 0) descriptorWaiters.delete(blockID)
+        resolve()
+      }
+      const waiters = descriptorWaiters.get(blockID) ?? new Set<() => void>()
+      waiters.add(done)
+      descriptorWaiters.set(blockID, waiters)
+      signal.addEventListener("abort", done, { once: true })
+    })
+  }
+
+  async function hydrateWorkspace(id: string, expectedWorkspaceEpoch: number) {
+    const mutation = modelMutation
+    const version = modelVersion()
+    const client = serverSDK().client
+    const [workspaceResult, functionalityResult, layoutResult] = await Promise.all([
+      client.v2.workspace.get({ id }, { throwOnError: true }),
+      client.v2.workspace.functionality.list({ workspaceID: id }, { throwOnError: true }),
+      client.v2.workspace.layout.get(
+        { workspaceLayoutGetPayload: { workspaceID: id, tuple: layoutTuple(), clientID: input.clientID } },
+        { throwOnError: true },
+      ),
+    ])
+    if (disposed || workspaceID() !== id || workspaceEpoch() !== expectedWorkspaceEpoch) return
+    if (mutation === modelMutation && version === modelVersion()) {
+      confirmedModel = workspaceResult.data.model
+      if (!modelSave) {
+        const changed = modelKey() !== confirmedModel
+        setModelKey(confirmedModel)
+        if (changed) {
+          modelIntent++
+          setModelVersion((version) => version + 1)
+        }
+      }
+    }
+    setDirectories(workspaceResult.data.directories)
+    const coderModel = parseModelKey(workspaceResult.data.coderModel)
+    setCoderModelValue(coderModel)
+    coderController?.hydrate(coderModel)
+    setFunctionalities(functionalityResult.data)
+    markDescriptorsPersisted(layoutResult.data.blocks, true)
+    return layoutResult.data
+  }
+
+  async function restoreWorkspaceAfterNotFound(syncDirty = true) {
+    if (disposed) return
+    const pending = workspaceRecoveryInFlight
+    if (pending?.workspaceEpoch === workspaceEpoch()) {
+      return pending.promise
+    }
+    const hadDirty = dirty()
+
+    clearWorkspace()
+    const expectedWorkspaceEpoch = workspaceEpoch()
+    const activation = trackWorkspaceActivation(
+      expectedWorkspaceEpoch,
+      (async () => {
+        const id = await ensureWorkspace({ force: true, expectedWorkspaceEpoch })
+        if (!id || disposed || workspaceID() !== id || workspaceEpoch() !== expectedWorkspaceEpoch) return undefined
+        const layout = await hydrateWorkspace(id, expectedWorkspaceEpoch)
+        if (disposed || !layout || workspaceID() !== id || workspaceEpoch() !== expectedWorkspaceEpoch) return undefined
+        if (!hadDirty) {
+          input.onServerLayout(layout)
+          setDirty(false)
+        } else {
+          setDirty(true)
+        }
+        setRevision(layout.revision)
+        markConnected()
+        input.notify("Workspace changed; block bindings reconnected")
+        if (hadDirty && syncDirty) {
+          void sync()
+        }
+        return { workspaceID: id, workspaceEpoch: expectedWorkspaceEpoch }
+      })().catch((error) => {
+        if (disposed || workspaceEpoch() !== expectedWorkspaceEpoch) return undefined
+        reportLayoutFailure(error, hadDirty)
+        return undefined
+      }),
+    )
+    const recovery = activation.finally(() => {
+      if (workspaceRecoveryInFlight?.promise === recovery) workspaceRecoveryInFlight = undefined
+    })
+    workspaceRecoveryInFlight = { workspaceEpoch: expectedWorkspaceEpoch, promise: recovery }
+
+    return recovery
+  }
+
+  async function recoverWorkspace(error: unknown) {
+    if (disposed || !isWorkspaceDeleted(error)) return false
+    await restoreWorkspaceAfterNotFound(false)
+    return true
+  }
+
+  async function withWorkspaceRecovery<T>(
+    operation: () => Promise<T>,
+    allowRetry = false,
+    expected?: { workspaceID: string; workspaceEpoch: number },
+  ): Promise<T | undefined> {
+    try {
+      return await operation()
+    } catch (error) {
+      if (disposed) return
+      if (expected && (workspaceID() !== expected.workspaceID || workspaceEpoch() !== expected.workspaceEpoch)) return
+      if (!isWorkspaceDeleted(error) || allowRetry) {
+        throw error
+      }
+      const recovered = await restoreWorkspaceAfterNotFound(false)
+      if (!recovered || workspaceID() !== recovered.workspaceID || workspaceEpoch() !== recovered.workspaceEpoch) return
+      return withWorkspaceRecovery(operation, true, recovered)
+    }
+  }
+
+  async function createWorkspace(name: string) {
+    const value = name.trim() || `Workspace ${workspaces().length + 1}`
+    const created = await serverSDK().client.v2.workspace.create({ name: value }, { throwOnError: true })
+    setWorkspaces((items) => [...items, { id: created.data.id, name: created.data.name }])
+    await switchWorkspace(created.data.id)
+  }
+
+  async function switchWorkspace(id: string) {
+    if (id === workspaceID()) return
+    if (!workspaces().some((workspace) => workspace.id === id)) return
+    try {
+      await sync()
+      await refreshInFlight
+    } catch (error) {
+      reportLayoutFailure(error, dirty())
+      return
+    }
+    if (dirty()) {
+      input.notify("Workspace has unsaved changes; reconnect before switching")
+      return
+    }
+
+    clearTimeout(retryTimer)
+    refreshGeneration++
+    setConnected(false)
+    setRevision(undefined)
+    setFunctionalities([])
+    persistedBlockIDs.clear()
+    input.onWorkspaceInvalidated?.()
+    modelMutation++
+    modelIntent++
+    modelSave = undefined
+    setWorkspaceID(id)
+    persistWorkspaceID(id)
+    setWorkspaceEpoch((value) => value + 1)
+    const expectedWorkspaceEpoch = workspaceEpoch()
+    const expected = { workspaceID: id, workspaceEpoch: expectedWorkspaceEpoch }
+
+    try {
+      await trackWorkspaceActivation(
+        expectedWorkspaceEpoch,
+        withWorkspaceRecovery(
+          async () => {
+            if (disposed || workspaceID() !== id || workspaceEpoch() !== expectedWorkspaceEpoch) return
+            try {
+              const layout = await hydrateWorkspace(id, expectedWorkspaceEpoch)
+              if (!layout || workspaceID() !== id || workspaceEpoch() !== expectedWorkspaceEpoch) return
+              const legacyDefault = isPristineDefault(layout)
+              input.onServerLayout(legacyDefault ? { ...layout, blocks: [] } : layout)
+              setRevision(layout.revision)
+              setDirty(legacyDefault)
+              markConnected()
+              if (legacyDefault) void sync()
+            } catch (error) {
+              if (disposed || workspaceID() !== id || workspaceEpoch() !== expectedWorkspaceEpoch) return
+              if (isWorkspaceDeleted(error)) throw error
+              reportLayoutFailure(error)
+            }
+          },
+          false,
+          expected,
+        ),
+      )
+    } catch (error) {
+      reportLayoutFailure(error)
+    }
+  }
+
+  async function renameWorkspace(name: string) {
+    const id = workspaceID()
+    const value = name.trim()
+    if (!id || !value) return
+    const updated = await serverSDK().client.v2.workspace.update(
+      { workspaceUpdatePayload: { id, patch: { name: value } } },
+      { throwOnError: true },
+    )
+    setWorkspaces((items) =>
+      items.map((workspace) => (workspace.id === id ? { id, name: updated.data.name } : workspace)),
+    )
+  }
+
+  // Flips the client to connected and, on any connect after the first, tells
+  // the master-agent reconciliation to re-sync known blocks (authoritative
+  // get/ensure, spec 02 §11): the event stream may have dropped while
+  // disconnected and buffered events are transient.
+  function markConnected() {
+    if (disposed) return
+    setConnected(true)
+    if (hasConnectedOnce && !input.runtimeHostBindings) fireMasterAgentReconnect()
+    hasConnectedOnce = true
+  }
+
+  function scheduleReconnect() {
+    if (disposed) return
+    clearTimeout(retryTimer)
+    retryTimer = setTimeout(() => void connect(), 3000)
+  }
+
+  function markDisconnected(preserveDirty = false) {
+    if (disposed) return
+    if (preserveDirty) setDirty(true)
+    const wasConnected = connected()
+    setConnected(false)
+    if (wasConnected) input.notify("Canvas is read-only while offline")
+    scheduleReconnect()
+  }
+
+  function reportLayoutFailure(error: unknown, preserveDirty = false) {
+    if (disposed) return
+    if (preserveDirty) setDirty(true)
+    if (error instanceof Error && isRecord(error.cause) && typeof error.cause.status === "number") {
+      const status = error.cause.status
+      if (status === 408 || status === 429 || status >= 500) {
+        markDisconnected()
+        return
+      }
+      // A non-retryable HTTP rejection still proves the server is reachable.
+      // Reconnecting cannot repair an invalid layout and would retry it forever.
+      input.notify(error.message)
+      return
+    }
+    markDisconnected()
+  }
+
+  // Pull: runs when the client connects. The server is authoritative here;
+  // afterwards the client owns the layout until the next change is synced.
+  // Pulling also claims layout authority for this client (handover): the
+  // last client to pull a tuple owns its layout.
+  function connect(): Promise<void> {
+    const expectedWorkspaceEpoch = workspaceEpoch()
+    const activation = workspaceActivation
+    if (activation?.workspaceEpoch === expectedWorkspaceEpoch) return activation.promise.then(() => undefined)
+    if (disposed || connected()) return Promise.resolve()
+    clearTimeout(retryTimer)
+    return trackWorkspaceActivation(
+      expectedWorkspaceEpoch,
+      withWorkspaceRecovery(async () => {
+        try {
+          const id = await ensureWorkspace({ expectedWorkspaceEpoch })
+          if (!id || disposed || workspaceID() !== id || workspaceEpoch() !== expectedWorkspaceEpoch) return
+          const layout = await hydrateWorkspace(id, expectedWorkspaceEpoch)
+          if (disposed || !layout || workspaceID() !== id || workspaceEpoch() !== expectedWorkspaceEpoch) return
+          // The client edited while the backend was unreachable (DEV mode): those
+          // edits are authoritative. Keep them and push once connected, instead
+          // of clobbering the canvas with the server's stale layout.
+          const legacyDefault = isPristineDefault(layout)
+          if (legacyDefault && !input.hasLocalBlocks()) input.onServerLayout({ ...layout, blocks: [] })
+          const clientOwnsLayout = dirty() || legacyDefault
+          if (clientOwnsLayout) {
+            setRevision(layout.revision)
+            markConnected()
+            setDirty(true)
+            void sync()
+            return
+          }
+          input.onServerLayout(layout)
+          setRevision(layout.revision)
+          markConnected()
+          setDirty(false)
+        } catch (error) {
+          if (disposed || workspaceEpoch() !== expectedWorkspaceEpoch) return
+          setConnected(false)
+          scheduleReconnect()
+          if (isWorkspaceDeleted(error)) throw error
+        }
+      }, false),
+    )
+  }
+
+  // Re-pull the authoritative layout. Pulling re-claims authority, so a
+  // handed-over client re-syncs to the latest state and can push again.
+  function refresh(minimumRevision = 0): Promise<WorkspaceLayoutInfo | undefined> {
+    if (refreshInFlight) return refreshInFlight
+    if (disposed || !workspaceID()) return Promise.resolve(undefined)
+    const refreshing = withWorkspaceRecovery(async () => {
+      if (disposed || !workspaceID()) return
+      const expectedWorkspaceID = workspaceID()!
+      const expectedWorkspaceEpoch = workspaceEpoch()
+      const expectedRefreshGeneration = refreshGeneration
+      try {
+        const client = serverSDK().client
+        const result = await client.v2.workspace.layout.get(
+          {
+            workspaceLayoutGetPayload: {
+              workspaceID: expectedWorkspaceID,
+              tuple: layoutTuple(),
+              clientID: input.clientID,
+            },
+          },
+          { throwOnError: true },
+        )
+        if (
+          disposed ||
+          workspaceID() !== expectedWorkspaceID ||
+          workspaceEpoch() !== expectedWorkspaceEpoch ||
+          refreshGeneration !== expectedRefreshGeneration
+        )
+          return
+        // A response older than the revision already established by a save
+        // can finish later. Return it to the causal retry without regressing
+        // the visible layout or revision.
+        if (result.data.revision < Math.max(minimumRevision, revision() ?? 0)) return result.data
+        if (!dirty()) input.onServerLayout(result.data)
+        setRevision(result.data.revision)
+        return result.data
+      } catch (error) {
+        if (
+          disposed ||
+          workspaceID() !== expectedWorkspaceID ||
+          workspaceEpoch() !== expectedWorkspaceEpoch ||
+          refreshGeneration !== expectedRefreshGeneration
+        )
+          return undefined
+        if (isWorkspaceDeleted(error)) throw error
+        reportLayoutFailure(error)
+        return undefined
+      }
+    }, false).finally(() => {
+      if (refreshInFlight === refreshing) refreshInFlight = undefined
+    })
+    refreshInFlight = refreshing
+    return refreshing
+  }
+
+  async function refreshFresh(
+    minimumRevision = 0,
+    retry = true,
+    expectedWorkspaceID = workspaceID(),
+    expectedWorkspaceEpoch = workspaceEpoch(),
+  ): Promise<WorkspaceLayoutInfo | undefined> {
+    await refreshInFlight
+    if (
+      disposed ||
+      !expectedWorkspaceID ||
+      workspaceID() !== expectedWorkspaceID ||
+      workspaceEpoch() !== expectedWorkspaceEpoch
+    )
+      return
+    const layout = await refresh(minimumRevision)
+    if (workspaceID() !== expectedWorkspaceID || workspaceEpoch() !== expectedWorkspaceEpoch) return
+    if (!layout || layout.revision >= minimumRevision) return layout
+    if (!retry) return
+    return refreshFresh(minimumRevision, false, expectedWorkspaceID, expectedWorkspaceEpoch)
+  }
+
+  function queueLayoutRefresh() {
+    const id = workspaceID()
+    if (disposed || !id) return
+    layoutRefreshPending = { workspaceID: id, workspaceEpoch: workspaceEpoch() }
+    startLayoutRefresh()
+  }
+
+  function startLayoutRefresh() {
+    if (disposed || layoutRefreshTask || !layoutRefreshPending) return
+    const task = (async () => {
+      while (layoutRefreshPending && !disposed) {
+        const expected = layoutRefreshPending
+        layoutRefreshPending = undefined
+        const syncing = syncInFlight
+        if (syncing) await syncing
+        const refreshing = refreshInFlight
+        if (refreshing) await refreshing
+        if (
+          disposed ||
+          !connected() ||
+          workspaceID() !== expected.workspaceID ||
+          workspaceEpoch() !== expected.workspaceEpoch
+        )
+          continue
+        const repush = dirty()
+        const editVersion = localEditVersion
+        const layout = await refreshFresh(0, true, expected.workspaceID, expected.workspaceEpoch)
+        if (
+          !layout ||
+          disposed ||
+          !connected() ||
+          workspaceID() !== expected.workspaceID ||
+          workspaceEpoch() !== expected.workspaceEpoch
+        )
+          continue
+        if (!repush && !dirty() && editVersion === localEditVersion) continue
+        setDirty(true)
+        await sync()
+      }
+    })()
+      .catch((error) => reportLayoutFailure(error, dirty()))
+      .finally(() => {
+        if (layoutRefreshTask !== task) return
+        layoutRefreshTask = undefined
+        startLayoutRefresh()
+      })
+    layoutRefreshTask = task
+  }
+
+  // Push: only when the layout actually changed after connect. Movements are
+  // already live client-side; this just re-syncs the settled state.
+  function sync(reclaim = true): Promise<void> {
+    if (syncInFlight) return syncInFlight
+    if (disposed || !connected() || !dirty() || revision() === undefined || !workspaceID()) return Promise.resolve()
+    const syncing = drainSync(reclaim).finally(() => {
+      if (syncInFlight === syncing) syncInFlight = undefined
+    })
+    syncInFlight = syncing
+    return syncing
+  }
+
+  async function drainSync(reclaim: boolean): Promise<void> {
+    if (disposed || !connected() || !dirty() || revision() === undefined || !workspaceID()) return
+    const retry = await withWorkspaceRecovery(async (): Promise<"edit" | "handover" | undefined> => {
+      if (disposed || !connected() || !dirty() || revision() === undefined || !workspaceID()) return
+      const blocks = input.getRecords()
+      const expectedEditVersion = localEditVersion
+      const expectedRevision = revision()!
+      const expectedWorkspaceID = workspaceID()!
+      const expectedWorkspaceEpoch = workspaceEpoch()
+      try {
+        const client = serverSDK().client
+        const result = await client.v2.workspace.layout.save(
+          {
+            workspaceLayoutSavePayload: {
+              workspaceID: expectedWorkspaceID,
+              tuple: layoutTuple(),
+              blocks,
+              expectedRevision,
+              clientID: input.clientID,
+            },
+          },
+          { throwOnError: true },
+        )
+        if (
+          disposed ||
+          !connected() ||
+          workspaceID() !== expectedWorkspaceID ||
+          workspaceEpoch() !== expectedWorkspaceEpoch
+        )
+          return
+        // Retire every pull that began before this save response. Conflict and
+        // handover recovery below then make a causally newer authority claim.
+        refreshGeneration++
+        if (result.data.status === "saved") {
+          setRevision(result.data.layout.revision)
+          markDescriptorsPersisted(blocks)
+          setDirty(localEditVersion !== expectedEditVersion)
+          return localEditVersion !== expectedEditVersion ? "edit" : undefined
+        }
+        if (result.data.status === "handed-over") {
+          // Authority was handed over to another client (another window/device
+          // connected after us). Re-pull to re-claim the latest revision,
+          // and re-push our settled state (explicit retry = last-write-wins).
+          setDirty(true)
+          // Another active client may immediately take authority again.
+          if (!reclaim || !(await refreshFresh(result.data.currentRevision))) return
+          input.notify("Layout updated from another window")
+          return "handover"
+        }
+        // Conflict: the server is the tie-breaker. Re-pull and adopt.
+        const authoritative = await refreshFresh(result.data.currentRevision)
+        if (!authoritative) {
+          setDirty(true)
+          return
+        }
+        if (localEditVersion !== expectedEditVersion) return "edit"
+        input.onServerLayout(authoritative)
+        setDirty(false)
+        input.notify("Layout updated from server")
+      } catch (error) {
+        if (
+          disposed ||
+          !connected() ||
+          workspaceID() !== expectedWorkspaceID ||
+          workspaceEpoch() !== expectedWorkspaceEpoch
+        )
+          return
+        if (isWorkspaceDeleted(error)) {
+          setDirty(true)
+          throw error
+        }
+        // Keep the local snapshot authoritative so it can be saved after the
+        // rejected edit is corrected or the network connection is restored.
+        reportLayoutFailure(error, true)
+      }
+    }, false)
+    if (retry) await drainSync(retry === "edit")
+  }
+
+  // Selects the Main model shared by workspace agent sessions: optimistic on the client,
+  // authoritative on the server (workspace.model).
+  async function selectModel(key: string) {
+    const id = workspaceID()
+    if (!id) return
+    const expectedWorkspaceEpoch = workspaceEpoch()
+    let targetID = id
+    const mutation = ++modelMutation
+    modelIntent++
+    setModelKey(key)
+    const previous = modelSave
+    // Serialize writes as well as client responses so an older request cannot win on the server.
+    const saving = (async () => {
+      await previous?.catch(() => undefined)
+      try {
+        const updated = await withWorkspaceRecovery(
+          async () => {
+            if (mutation !== modelMutation) return
+            targetID = workspaceID() ?? targetID
+            return serverSDK().client.v2.workspace.update(
+              { workspaceUpdatePayload: { id: targetID, patch: { model: key } } },
+              { throwOnError: true },
+            )
+          },
+          false,
+          { workspaceID: id, workspaceEpoch: expectedWorkspaceEpoch },
+        )
+        if (workspaceID() !== targetID || !updated) return
+        confirmedModel = updated.data.model
+        if (mutation !== modelMutation) return
+        setModelKey(confirmedModel)
+        setModelVersion((version) => version + 1)
+      } catch (error) {
+        if (mutation !== modelMutation || workspaceID() !== targetID) return
+        setModelKey(confirmedModel)
+        input.notify("Failed to save workspace model")
+        throw error
+      }
+    })().finally(() => {
+      if (modelSave === saving) modelSave = undefined
+    })
+    modelSave = saving
+    // Topbar callers are fire-and-forget; submission waiters still observe the original rejection.
+    await saving.catch(() => undefined)
+  }
+
+  async function waitForModelSelection() {
+    const id = workspaceID()
+    const epoch = workspaceEpoch()
+    while (true) {
+      const intent = modelIntent
+      const results = await Promise.allSettled([modelSave, coderController?.waitForSelection()])
+      if (disposed || workspaceID() !== id || workspaceEpoch() !== epoch) {
+        throw new Error("Workspace changed while saving model selection")
+      }
+      const failure = results.find((result) => result.status === "rejected")
+      if (failure?.status === "rejected") throw failure.reason
+      if (intent !== modelIntent) continue
+      return
+    }
+  }
+
+  // Updates the workspace's working directories: optimistic on the client,
+  // authoritative on the server (workspace.directories). The first directory
+  // is the workspace's primary directory (chat blocks bind to it).
+  async function updateDirectories(next: string[]) {
+    const workspace = workspaceID()
+    if (!workspace) return
+    const expectedWorkspaceEpoch = workspaceEpoch()
+    try {
+      await withWorkspaceRecovery(
+        async () => {
+          const id = workspaceID()
+          if (!id) return
+          setDirectories(next)
+          const client = serverSDK().client
+          await client.v2.workspace.update(
+            { workspaceUpdatePayload: { id, patch: { directories: next } } },
+            { throwOnError: true },
+          )
+        },
+        false,
+        { workspaceID: workspace, workspaceEpoch: expectedWorkspaceEpoch },
+      )
+    } catch {
+      input.notify("Failed to save workspace directories")
+    }
+  }
+
+  // Config: loads the project config (the project's .opencode config folder
+  // via the directory-scoped SDK). If the project has no permission
+  // configuration yet, one is created with ALL permissions denied.
+  async function loadConfig() {
+    const directory = input.directory()
+    if (!directory) return
+    try {
+      const client = serverSDK().createClient({ directory, throwOnError: true })
+      const result = await client.config.get({ directory }, { throwOnError: true })
+      const config = result.data
+      if (config.permission === undefined) {
+        await client.config.update({ directory, config: { permission: "deny" } }, { throwOnError: true })
+        setConfigPermission("deny")
+        input.notify("Project config created — all permissions denied")
+        return
+      }
+      setConfigPermission(config.permission)
+    } catch {
+      /* offline or no project yet — retried on reconnect */
+    }
+  }
+
+  function noteLocalEdit() {
+    if (connected()) {
+      localEditVersion++
+      setDirty(true)
+      return
+    }
+    input.notify("Canvas is read-only while offline")
+  }
+
+  // ---- MasterAgent domain (M6) ----
+
+  // Master-agent block IDs in the current layout records; layout is the only
+  // client-side source of block identity (never session/binding state).
+  function masterAgentBlockIDs(): string[] {
+    return input
+      .getRecords()
+      .filter((record) => record.functionality === MASTER_AGENT_FUNCTIONALITY_ID)
+      .map((record) => record.id)
+  }
+
+  // M5's sdk-port maps the generated master-agent endpoints onto the M1
+  // transport; the default composition adapts that transport to this
+  // manager's port. Hosts may inject an alternative via `masterAgentPort`.
+  function resolvePort(): MasterAgentPort {
+    port ??= (input.masterAgentPort ?? defaultMasterAgentPort)(serverSDK().client)
+    return port
+  }
+
+  function controllerFor(blockID: string): MasterAgentLifecycleController {
+    let controller = controllers.get(blockID)
+    if (!controller) {
+      controller = createMasterAgentLifecycleController({
+        workspaceID,
+        blockID,
+        port: resolvePort(),
+      })
+      controllers.set(blockID, controller)
+    }
+    return controller
+  }
+
+  function fireMasterAgentReconnect() {
+    for (const listener of reconnectListeners) listener()
+  }
+
+  // A binding-updated event can land before the block's initial get finishes;
+  // hand the newest buffered event to the controller once it has a revision
+  // to compare against (stale events are dropped by the reducer).
+  function drainBufferedBinding(blockID: string) {
+    const event = reconciliation.takeBuffered(blockID)
+    if (event) controllers.get(blockID)?.dispatch({ type: "binding-updated", event })
+  }
+
+  const reconciliation = input.runtimeHostBindings
+    ? { dispose: () => {}, takeBuffered: () => undefined }
+    : createMasterAgentEventReconciliation({
+        workspaceID,
+        isKnownBlock: (blockID) => masterAgentBlockIDs().includes(blockID),
+        knownBlocks: masterAgentBlockIDs,
+        currentRevision: (blockID) => {
+          const state = controllers.get(blockID)?.state()
+          return state?.status === "ready" ? state.binding.revision : undefined
+        },
+        onBindingUpdated: (event) => {
+          controllers.get(event.blockID)?.dispatch({ type: "binding-updated", event })
+        },
+        refetch: (blockID) => void controllerFor(blockID).refetch(),
+        listen: (listener) =>
+          serverSDK().event.listen((entry) => {
+            // The ServerSDK emitter delivers `{ name, details }` with `details`
+            // being the ServerEvent (type + properties); the reconciliation
+            // filters by `details.type` and drops stale/foreign payloads.
+            listener({ name: entry.name, details: { type: entry.details.type, properties: entry.details.properties } })
+          }),
+        onReconnect: (listener) => {
+          reconnectListeners.add(listener)
+          return () => {
+            reconnectListeners.delete(listener)
+          }
+        },
+      })
+
+  // Drop projections for master-agent blocks that left the layout; the canvas
+  // block-removal flow never needs to know about them.
+  const disposeBlockTracking = createRoot((disposeRoot) => {
+    createEffect(() => {
+      const blockIDs = masterAgentBlockIDs()
+      for (const [blockID, controller] of controllers) {
+        if (blockIDs.includes(blockID)) continue
+        controller.dispose()
+        controllers.delete(blockID)
+      }
+    })
+    return disposeRoot
+  })
+
+  // The project config's `task` permission gates Coder configuration; the
+  // host enforces it again server-side.
+  function taskPermission(): CoderTaskPermission {
+    const permission = resolveConfigPermission(configPermission(), "task")
+    if (permission === "allow" || permission === "ask" || permission === "deny") return permission
+    return "default"
+  }
+
+  // Workspace-wide Coder settings (spec 02 §12): one controller per manager,
+  // shared by every master-agent block in the workspace.
+  function coder(): CoderController<ModelSelection> {
+    coderController ??= createCoderController({
+      workspaceID,
+      ready: connected,
+      coderModel: coderModelValue,
+      patchCoderModel: (id, model, signal) => resolvePort().patchCoderModel(id, model, signal),
+      onServerModel: (model) => setCoderModelValue(model),
+      onIntent: () => modelIntent++,
+      taskPermission,
+      isModelAvailable: input.isCoderModelAvailable ?? (() => true),
+    })
+    return coderController
+  }
+
+  const masterAgent: MasterAgentManagerApi = {
+    state: (blockID) => controllerFor(blockID).state,
+    ensure: async (blockID) => {
+      if (disposed) return
+      await controllerFor(blockID).ensure()
+      drainBufferedBinding(blockID)
+    },
+    retry: async (blockID) => {
+      if (disposed) return
+      await controllerFor(blockID).retry()
+      drainBufferedBinding(blockID)
+    },
+    reset: async (blockID) => {
+      if (disposed) return
+      await controllerFor(blockID).reset()
+    },
+    removeLocalProjection: (blockID) => {
+      const controller = controllers.get(blockID)
+      if (!controller) return
+      controller.dispose()
+      controllers.delete(blockID)
+    },
+    coder: {
+      get model() {
+        return coder().model
+      },
+      get enabled() {
+        return coder().enabled
+      },
+      get pending() {
+        return coder().pending
+      },
+      get error() {
+        return coder().error
+      },
+      set: (model) => coder().set(model),
+      clear: () => coder().clear(),
+      retry: () => coder().retry(),
+    },
+    descriptor: MASTER_AGENT_MODULE,
+  }
+
+  let cleanupLocalListeners: () => void = () => {}
+
+  function start() {
+    if (started) return
+    started = true
+    makeEventListeners()
+    void serverSDK().event.start()
+    void connect()
+    void loadConfig()
+  }
+
+  function makeEventListeners() {
+    const unsubs: (() => void)[] = []
+    const on = <E extends Event>(target: EventTarget, type: string, handler: (event: E) => void) => {
+      target.addEventListener(type, handler as EventListener)
+      unsubs.push(() => target.removeEventListener(type, handler as EventListener))
+    }
+
+    on<Event>(window, "online", () => {
+      if (!connected()) void connect()
+      else fireMasterAgentReconnect()
+      if (configPermission() === undefined) void loadConfig()
+    })
+    on<Event>(window, "offline", () => markDisconnected(syncInFlight !== undefined))
+    // Re-claim layout authority when the window regains focus: push pending
+    // edits, otherwise re-pull so another client's handover becomes visible.
+    on<Event>(window, "focus", () => {
+      if (!connected()) void connect()
+      else if (dirty()) void sync()
+      else void refresh()
+    })
+
+    // The project config (permissions) can change server-side; re-gate the
+    // blocks live when a config.updated event arrives.
+    configUnsubscribe = serverSDK().event.listen((entry) => {
+      const type = entry.details.type as string
+      if (type !== "config.updated") return
+      void loadConfig()
+    })
+    // Realtime layout fan-out: another client (or surface) saved this
+    // workspace's layout. Re-pull to adopt it live; pending local edits are
+    // re-pushed after adoption (last-write-wins, mirroring the handover flow).
+    layoutUnsubscribe = serverSDK().event.listen((entry) => {
+      const type = entry.details.type as string
+      if (type !== "workspace.layout.updated") return
+      const properties = entry.details.properties as { workspaceID?: string }
+      if (!connected()) return
+      if (workspaceID() && properties.workspaceID && properties.workspaceID !== workspaceID()) return
+      // Event revisions span every device-class tuple in a workspace, so they
+      // cannot be compared to this layout's revision. Invalidate an older GET
+      // and queue exactly one new pull after any save/refresh already running.
+      refreshGeneration++
+      queueLayoutRefresh()
+    })
+
+    cleanupLocalListeners = () => unsubs.forEach((unsub) => unsub())
+  }
+
+  function dispose() {
+    if (disposed) return
+    disposed = true
+    clearTimeout(retryTimer)
+    cleanupLocalListeners()
+    configUnsubscribe?.()
+    layoutUnsubscribe?.()
+    configUnsubscribe = undefined
+    layoutUnsubscribe = undefined
+    reconciliation.dispose()
+    disposeBlockTracking()
+    reconnectListeners.clear()
+    for (const controller of controllers.values()) controller.dispose()
+    controllers.clear()
+    port = undefined
+    coderController = undefined
+    for (const waiters of descriptorWaiters.values()) {
+      for (const resolve of waiters) resolve()
+    }
+    descriptorWaiters.clear()
+    started = false
+  }
+
+  return {
+    workspaceID,
+    workspaces,
+    workspaceEpoch,
+    revision,
+    connected,
+    dirty,
+    modelKey,
+    modelVersion,
+    modelIntent: () => modelIntent,
+    waitForModelSelection,
+    directories,
+    configPermission,
+    functionalities,
+    noteLocalEdit,
+    connect,
+    refresh,
+    createWorkspace,
+    switchWorkspace,
+    renameWorkspace,
+    sync,
+    awaitDescriptorPersisted,
+    recoverWorkspace,
+    selectModel,
+    updateDirectories,
+    loadConfig,
+    masterAgent,
+    start,
+    dispose,
+  }
+}
+
+// Workspace model fields are `providerID:modelID` keys (the canvas model
+// picker's key format); M1's ModelSelection is the structured view of the
+// same selection. Malformed or missing keys decode as null.
+function parseModelKey(key: string | null | undefined): ModelSelection | null {
+  return Workspace.ModelSelection.decode(key) ?? null
+}
+
+// Mirrors the canvas page's config normalization for the `task` permission
+// key. The page's helper cannot be imported here without a module cycle.
+function resolveConfigPermission(config: PermissionConfig | undefined, key: string): PermissionAction | undefined {
+  if (!config) return undefined
+  if (typeof config === "string") return config
+  const value = config[key] ?? config["*"]
+  if (value === undefined) return undefined
+  if (typeof value === "string") return value
+  return resolveConfigPermission(value, key)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
+}
+
+// Default port composition (M5): sdk-port adapts G1's generated
+// master-agent endpoints and the workspace coderModel patch onto the M1
+// transport; the port layer adapts that transport to this manager's port.
+function defaultMasterAgentPort(client: ReturnType<typeof createSdkForServer>): MasterAgentPort {
+  return createMasterAgentPort(createMasterAgentSdkPort(client))
+}

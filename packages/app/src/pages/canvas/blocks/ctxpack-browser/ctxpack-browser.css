@@ -1,0 +1,524 @@
+/* CtxPackBrowser — compact canvas-native block layout. */
+
+.ctxpack-browser {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 12px;
+  box-sizing: border-box;
+  overflow: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--canvas-line-strong) transparent;
+  font-size: 12px;
+  color: var(--canvas-text);
+  background: transparent;
+}
+
+.ctxpack-browser-main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding-bottom: 2px;
+}
+
+.ctxpack-browser-tabs {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+  padding: 2px;
+  border: 1px solid var(--canvas-line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--canvas-surface-soft) 88%, transparent);
+}
+.ctxpack-browser-tabs-root {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+.ctxpack-browser-tabs-root[data-component="tabs"][data-variant="pill"]
+  .ctxpack-browser-tabs
+  > [data-slot="tabs-trigger-wrapper"] {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: none;
+}
+.ctxpack-browser-tab {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 32px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--canvas-muted);
+  font-size: 11px;
+  font-weight: 760;
+  cursor: pointer;
+}
+.ctxpack-browser-tab:hover,
+.ctxpack-browser-tabs-root[data-component="tabs"][data-variant="pill"] .ctxpack-browser-tab[data-selected] {
+  color: var(--canvas-text);
+  background: var(--canvas-surface-hover);
+}
+.ctxpack-browser-tab:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 65%, var(--canvas-text));
+  outline-offset: 1px;
+}
+.ctxpack-browser-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* Skeleton (loading) */
+.ctxpack-browser-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+.ctxpack-browser-skeleton-line {
+  height: 14px;
+  border-radius: 8px;
+  background: var(--canvas-line);
+}
+.ctxpack-browser-skeleton-line:nth-child(2) {
+  width: 80%;
+}
+.ctxpack-browser-skeleton-line:nth-child(3) {
+  width: 60%;
+}
+/* Message states (permission-denied / unavailable / error) */
+.ctxpack-browser-message {
+  padding: 32px 24px;
+  text-align: center;
+  color: var(--canvas-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.ctxpack-browser-message-title {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--canvas-text);
+}
+.ctxpack-browser-error-code {
+  display: inline-block;
+  margin-top: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+  background: var(--canvas-surface-hover);
+  border: 1px solid var(--canvas-line);
+  padding: 2px 8px;
+  border-radius: 9px;
+}
+
+/* Stale badge */
+.ctxpack-browser-stale {
+  background: color-mix(in srgb, var(--canvas-yellow) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--canvas-yellow) 35%, transparent);
+  color: var(--canvas-text);
+  padding: 6px 12px;
+  border-radius: 11px;
+  font-size: 10px;
+  font-weight: 720;
+}
+
+/* Toolbar */
+.ctxpack-browser-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.ctxpack-browser-search {
+  flex: 1 1 180px;
+  min-width: 0;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--canvas-line);
+  border-radius: 11px;
+  outline: none;
+  font-size: 11px;
+  background: color-mix(in srgb, var(--canvas-surface-soft) 88%, transparent);
+  color: var(--canvas-text);
+}
+.ctxpack-browser-search:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--canvas-line));
+}
+.ctxpack-browser-filter.ctxpack-browser-sort {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Filters */
+.ctxpack-browser-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  padding: 0 0 8px;
+  border-bottom: 1px solid var(--canvas-line);
+}
+.ctxpack-browser-filter {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-width: 100%;
+  gap: 2px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--canvas-muted);
+}
+.ctxpack-browser-filter select,
+.ctxpack-browser-filter input:not([type="checkbox"]) {
+  min-width: 0;
+  max-width: 100%;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid var(--canvas-line);
+  border-radius: 10px;
+  outline: none;
+  font-size: 11px;
+  background: color-mix(in srgb, var(--canvas-surface-soft) 88%, transparent);
+  color: var(--canvas-text);
+}
+.ctxpack-browser-filter select:focus-visible,
+.ctxpack-browser-filter input:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--canvas-line));
+}
+.ctxpack-browser-filter-toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+.ctxpack-browser-filter-toggle input {
+  accent-color: var(--accent);
+}
+
+/* Card grid */
+.ctxpack-browser-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ctxpack-browser-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--canvas-line);
+  border-radius: 14px;
+  padding: 11px;
+  background: color-mix(in srgb, var(--canvas-surface-solid) 76%, transparent);
+  cursor: pointer;
+  outline: none;
+  min-width: 0;
+}
+.ctxpack-browser-row-content {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+.ctxpack-browser-pin {
+  flex: 0 0 auto;
+}
+.ctxpack-browser-pin-area {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.ctxpack-browser-pin-error {
+  max-width: 120px;
+  color: var(--text-on-critical-base);
+  font-size: 9px;
+  line-height: 1.2;
+  text-align: right;
+}
+.ctxpack-browser-card[draggable="true"] {
+  cursor: grab;
+}
+.ctxpack-browser-card[draggable="true"]:active {
+  cursor: grabbing;
+}
+.ctxpack-browser-card[data-deleted="true"] {
+  opacity: 0.55;
+}
+.ctxpack-browser-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--canvas-line));
+  background: color-mix(in srgb, var(--accent) 8%, var(--canvas-surface-soft));
+}
+.ctxpack-browser-row-content {
+  cursor: pointer;
+}
+.ctxpack-browser-row-content:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--canvas-line));
+  outline: 2px solid color-mix(in srgb, var(--accent) 65%, var(--canvas-text));
+  outline-offset: 2px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--canvas-surface-soft));
+}
+.ctxpack-browser-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ctxpack-browser-card-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 780;
+  overflow-wrap: anywhere;
+}
+.ctxpack-browser-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 1px 8px;
+  border-radius: 999px;
+}
+.ctxpack-browser-badge-deleted {
+  background: color-mix(in srgb, var(--canvas-pink) 12%, transparent);
+  color: color-mix(in srgb, var(--canvas-pink) 35%, var(--canvas-text));
+}
+
+/* Chips */
+.ctxpack-browser-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.ctxpack-browser-chip {
+  font-size: 10px;
+  font-weight: 680;
+  background: color-mix(in srgb, var(--canvas-surface-soft) 88%, transparent);
+  border: 1px solid var(--canvas-line);
+  color: var(--canvas-muted);
+  padding: 1px 8px;
+  border-radius: 999px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ctxpack-browser-chip-more {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: color-mix(in srgb, var(--accent) 35%, var(--canvas-text));
+}
+
+/* Card meta */
+.ctxpack-browser-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 0;
+  font-size: 10px;
+  color: var(--canvas-muted);
+}
+
+/* Card actions */
+.ctxpack-browser-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ctxpack-browser-btn {
+  min-height: 30px;
+  font-size: 11px;
+  font-weight: 720;
+  padding: 4px 10px;
+  border: 1px solid var(--canvas-line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--canvas-surface-soft) 88%, transparent);
+  color: var(--canvas-text);
+  cursor: pointer;
+}
+.ctxpack-browser-btn:hover:not(:disabled) {
+  background: var(--canvas-surface-hover);
+}
+.ctxpack-browser-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.ctxpack-browser-btn-danger {
+  color: color-mix(in srgb, var(--canvas-pink) 35%, var(--canvas-text));
+  border-color: color-mix(in srgb, var(--canvas-pink) 35%, transparent);
+}
+.ctxpack-browser-btn-attach {
+  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
+  color: color-mix(in srgb, var(--accent) 35%, var(--canvas-text));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  font-size: 11px;
+  padding: 6px 12px;
+}
+
+/* Visually hidden aria-live region (announces failures via errorCode) */
+.ctxpack-browser-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Empty state */
+.ctxpack-browser-empty {
+  padding: 32px;
+  text-align: center;
+  color: var(--canvas-muted);
+}
+
+/* Load more */
+.ctxpack-browser-load-more {
+  align-self: center;
+  padding: 6px 18px;
+}
+.ctxpack-browser-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--canvas-line-strong);
+  border-top-color: var(--canvas-text);
+  border-radius: 50%;
+  animation: ctxpack-spin 0.8s linear infinite;
+  vertical-align: middle;
+}
+@keyframes ctxpack-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Detail view */
+.ctxpack-browser-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+.ctxpack-browser-detail-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.ctxpack-drag-icon {
+  cursor: grab;
+  color: var(--canvas-muted);
+  display: inline-flex;
+  align-items: center;
+  width: 30px;
+  height: 30px;
+  justify-content: center;
+  padding: 0;
+  border-radius: 10px;
+}
+.ctxpack-drag-icon:hover,
+.ctxpack-drag-icon:focus-visible {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--canvas-text);
+}
+.ctxpack-drag-icon:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 65%, var(--canvas-text));
+  outline-offset: 2px;
+}
+.ctxpack-browser-detail-titles {
+  flex: 1;
+  min-width: 0;
+}
+.ctxpack-browser-detail-titles h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+.ctxpack-browser-detail-sub {
+  margin: 2px 0 0;
+  color: var(--canvas-muted);
+  font-size: 10px;
+}
+.ctxpack-browser-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ctxpack-browser-detail-meta {
+  margin: 0;
+  font-size: 10px;
+  color: var(--canvas-muted);
+}
+
+/* Fragments */
+.ctxpack-browser-fragments {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ctxpack-browser-fragment {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--canvas-line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--canvas-surface-soft) 82%, transparent);
+}
+.ctxpack-browser-fragment-source {
+  font-size: 10px;
+  color: var(--canvas-muted);
+  margin-bottom: 6px;
+  overflow-wrap: anywhere;
+}
+.ctxpack-browser-fragment-text {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+  background: transparent;
+}
+.ctxpack-browser-metadata {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.ctxpack-browser-plan-hint {
+  margin: 0;
+  color: var(--canvas-muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+@media (pointer: coarse) {
+  .ctxpack-browser-search,
+  .ctxpack-browser-filter select,
+  .ctxpack-browser-filter input:not([type="checkbox"]) {
+    font-size: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ctxpack-browser-spinner {
+    animation: none;
+  }
+}

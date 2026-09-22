@@ -1,0 +1,782 @@
+import type { Message, Session } from "@opencode-ai/sdk/v2/client"
+import { showToast } from "@/utils/toast"
+import { base64Encode } from "@opencode-ai/core/util/encode"
+import { Binary } from "@opencode-ai/core/util/binary"
+import { useNavigate, useParams, useSearchParams } from "@solidjs/router"
+import { batch, startTransition, type Accessor } from "solid-js"
+import { useTabs } from "@/context/tabs"
+import { useServerSync, type ServerSync } from "@/context/server-sync"
+import { useLanguage } from "@/context/language"
+import { useLayout } from "@/context/layout"
+import { useLocal, type ModelSelection } from "@/context/local"
+import { usePermission } from "@/context/permission"
+import { type ContextItem, type ImageAttachmentPart, type Prompt, type usePrompt } from "@/context/prompt"
+import { useSDK, type DirectorySDK } from "@/context/sdk"
+import { useSync, type DirectorySync } from "@/context/sync"
+import { Identifier } from "@/utils/id"
+import { Worktree as WorktreeState } from "@/utils/worktree"
+import { buildRequestParts } from "./build-request-parts"
+import { setCursorPosition } from "./editor-dom"
+import { formatServerError } from "@/utils/server-errors"
+import { createMsgScheduler } from "@/utils/msg-scheduler"
+import { ScopedKey } from "@/utils/server-scope"
+import { createPromptSubmissionState } from "./submission-state"
+import { normalizeSessionInfo } from "@/utils/session"
+import { Event } from "@opencode-ai/schema/event"
+import { blobDataUrl } from "@/utils/draft-store"
+import {
+  toSessionContextAttachmentInput,
+  type ContextAttachmentDraft,
+  type ContextAttachmentStore,
+  type SessionContextAttachmentInput,
+} from "@/context/ctxpack/attachment-store"
+
+type PendingPrompt = {
+  abort: AbortController
+  cleanup: VoidFunction
+}
+
+const pending = new Map<string, PendingPrompt>()
+
+export type FollowupDraft = {
+  sessionID: string
+  sessionDirectory: string
+  prompt: Prompt
+  context: (ContextItem & { key: string })[]
+  agent: string
+  model: { providerID: string; modelID: string }
+  variant?: string
+  workspaceModels?: boolean
+  chatOnly?: boolean
+}
+
+type FollowupSendInput = {
+  api: DirectorySDK["api"]["session"]
+  serverSync: ServerSync
+  sync: DirectorySync
+  draft: FollowupDraft
+  messageID?: string
+  optimisticBusy?: boolean
+  delivery?: "steer" | "queue"
+  before?: () => Promise<boolean> | boolean
+  /** Serialized ready context attachments (U5). Empty array → field omitted. */
+  contextAttachments?: SessionContextAttachmentInput[]
+  skillCommandRejection: { title: string; description: string }
+}
+
+const CTXPACK_COMMAND_REJECTION = "Context attachments are not supported for this command"
+
+const draftText = (prompt: Prompt) => prompt.map((part) => ("content" in part ? part.content : "")).join("")
+
+const draftImages = (prompt: Prompt) => prompt.filter((part): part is ImageAttachmentPart => part.type === "image")
+
+const hasSelectedSkill = (prompt: Prompt) => prompt.some((part) => part.type === "skill")
+
+export async function sendFollowupDraft(input: FollowupSendInput) {
+  const text = draftText(input.draft.prompt)
+  const images = draftImages(input.draft.prompt)
+  const setBusy = () => {
+    if (!input.optimisticBusy) return
+    input.serverSync.session.set("session_status", input.draft.sessionID, { type: "busy" })
+  }
+
+  const setIdle = () => {
+    if (!input.optimisticBusy) return
+    input.serverSync.session.set("session_status", input.draft.sessionID, { type: "idle" })
+  }
+
+  const wait = async () => {
+    const ok = await input.before?.()
+    if (ok === false) return false
+    return true
+  }
+
+  const [head, ...tail] = text.split(" ")
+  const cmd = head?.startsWith("/") ? head.slice(1) : undefined
+  if (!input.draft.chatOnly && cmd && input.sync.data.command.find((item) => item.name === cmd)) {
+    if (hasSelectedSkill(input.draft.prompt)) {
+      showToast(input.skillCommandRejection)
+      return false
+    }
+    if ((input.contextAttachments?.length ?? 0) > 0) {
+      showToast({ title: CTXPACK_COMMAND_REJECTION })
+      return false
+    }
+    setBusy()
+    try {
+      if (!(await wait())) {
+        setIdle()
+        return false
+      }
+
+      const messageID = Identifier.ascending("message")
+      await input.api.command({
+        sessionID: input.draft.sessionID,
+        id: messageID,
+        command: cmd,
+        arguments: tail.join(" "),
+        ...(!input.draft.workspaceModels && {
+          agent: input.draft.agent,
+          model: {
+            id: input.draft.model.modelID,
+            providerID: input.draft.model.providerID,
+            variant: input.draft.variant,
+          },
+        }),
+        files: await Promise.all(
+          images.map(async (attachment) => ({
+            uri: await blobDataUrl(attachment.blob, attachment.mime),
+            name: attachment.filename,
+          })),
+        ),
+      })
+      return true
+    } catch (err) {
+      setIdle()
+      throw err
+    }
+  }
+
+  const messageID = input.messageID ?? Identifier.ascending("message")
+  const encodedImages = await Promise.all(
+    images.map(async (attachment) => ({
+      ...attachment,
+      dataUrl: await blobDataUrl(attachment.blob, attachment.mime),
+    })),
+  )
+  const { requestParts, optimisticParts } = buildRequestParts({
+    prompt: input.draft.prompt,
+    context: input.draft.context,
+    images: encodedImages,
+    text,
+    sessionID: input.draft.sessionID,
+    messageID,
+    sessionDirectory: input.draft.sessionDirectory,
+  })
+
+  const message: Message = {
+    id: messageID,
+    sessionID: input.draft.sessionID,
+    role: "user",
+    time: { created: Date.now() },
+    agent: input.draft.agent,
+    model: { ...input.draft.model, variant: input.draft.variant },
+  }
+
+  const add = () =>
+    input.sync.session.optimistic.add({
+      directory: input.draft.sessionDirectory,
+      sessionID: input.draft.sessionID,
+      message,
+      parts: optimisticParts,
+    })
+
+  const remove = () =>
+    input.sync.session.optimistic.remove({
+      directory: input.draft.sessionDirectory,
+      sessionID: input.draft.sessionID,
+      messageID,
+    })
+
+  batch(() => {
+    setBusy()
+    add()
+  })
+
+  try {
+    if (!(await wait())) {
+      batch(() => {
+        setIdle()
+        remove()
+      })
+      return false
+    }
+
+    const contextAttachments = input.contextAttachments ?? []
+    const request: Parameters<DirectorySDK["api"]["session"]["prompt"]>[0] & {
+      contextAttachments?: SessionContextAttachmentInput[]
+    } = {
+      sessionID: input.draft.sessionID,
+      id: messageID,
+      ...(!input.draft.workspaceModels && {
+        agent: input.draft.agent,
+        model: input.draft.model,
+        variant: input.draft.variant,
+      }),
+      delivery: input.delivery ?? "steer",
+      legacyParts: requestParts,
+      text: requestParts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n"),
+      files: requestParts.flatMap((part) => {
+        if (part.type !== "file") return []
+        const text = part.source?.text
+        return [
+          {
+            uri: part.url,
+            name: part.filename,
+            mention: text ? { start: text.start, end: text.end, text: text.value } : undefined,
+          },
+        ]
+      }),
+      agents: requestParts.flatMap((part) =>
+        part.type === "agent"
+          ? [
+              {
+                name: part.name,
+                mention: part.source
+                  ? { start: part.source.start, end: part.source.end, text: part.source.value }
+                  : undefined,
+              },
+            ]
+          : [],
+      ),
+      ...(contextAttachments.length > 0 ? { contextAttachments } : {}),
+    }
+    await input.api.prompt(request)
+    return true
+  } catch (err) {
+    batch(() => {
+      setIdle()
+      remove()
+    })
+    throw err
+  }
+}
+
+type PromptSubmitInput = {
+  prompt: ReturnType<typeof usePrompt>
+  sessionID?: Accessor<string | undefined>
+  agent?: Accessor<string | undefined>
+  chatOnly?: boolean
+  info: Accessor<Pick<Session, "id" | "agent" | "model"> | undefined>
+  imageAttachments: Accessor<ImageAttachmentPart[]>
+  commentCount: Accessor<number>
+  autoAccept: Accessor<boolean>
+  mode: Accessor<"normal" | "shell">
+  working: Accessor<boolean>
+  editor: () => HTMLDivElement | undefined
+  queueScroll: () => void
+  promptLength: (prompt: Prompt) => number
+  addToHistory: (prompt: Prompt, mode: "normal" | "shell") => void
+  resetHistoryNavigation: () => void
+  setMode: (mode: "normal" | "shell") => void
+  setPopover: (popover: "at" | "slash" | null) => void
+  newSessionWorktree?: Accessor<string | undefined>
+  onNewSessionWorktreeReset?: () => void
+  onAbort?: () => void
+  onSubmit?: () => void
+  model?: ModelSelection
+  workspaceModels?: boolean
+  beforeSubmit?: () => Promise<void>
+  /** U5: context attachment store for snapshot/clear/restore (M1-provided). */
+  contextAttachmentStore?: ContextAttachmentStore
+}
+
+export function createPromptSubmit(input: PromptSubmitInput) {
+  const navigate = useNavigate()
+  const sdk = useSDK()
+  const sync = useSync()
+  const serverSync = useServerSync()
+  const local = useLocal()
+  const permission = usePermission()
+  const prompt = input.prompt
+  const layout = useLayout()
+  const language = useLanguage()
+  const params = useParams()
+  const [search] = useSearchParams<{ draftId?: string }>()
+  const tabs = useTabs()
+  const pendingKey = (sessionID: string) => ScopedKey.from(sdk().scope, sessionID)
+  let preparing = false
+
+  const errorMessage = (err: unknown) => {
+    if (err && typeof err === "object" && "message" in err && typeof err.message === "string") return err.message
+    if (err && typeof err === "object" && "data" in err) {
+      const data = (err as { data?: { message?: string } }).data
+      if (data?.message) return data.message
+    }
+    if (err instanceof Error) return err.message
+    return language.t("common.requestFailed")
+  }
+
+  const interrupt = async () => {
+    const sessionID = input.sessionID ? input.sessionID() : params.id
+    if (!sessionID) return
+
+    serverSync().session.set("todo", sessionID, [])
+
+    input.onAbort?.()
+
+    const key = pendingKey(sessionID)
+    const queued = pending.get(key)
+    if (queued) {
+      queued.abort.abort()
+      queued.cleanup()
+      pending.delete(key)
+      return
+    }
+    await (input.chatOnly ? sdk().currentApi : sdk().api).session.interrupt({ sessionID })
+  }
+
+  const restoreCommentItems = (
+    target: ReturnType<ReturnType<typeof usePrompt>["capture"]>,
+    items: (ContextItem & { key: string })[],
+  ) => {
+    for (const item of items) {
+      target.context.add({
+        type: "file",
+        path: item.path,
+        selection: item.selection,
+        comment: item.comment,
+        commentID: item.commentID,
+        commentOrigin: item.commentOrigin,
+        preview: item.preview,
+      })
+    }
+  }
+
+  const seed = (dir: string, info: Session) => {
+    serverSync().session.remember(info)
+    const [, setStore] = serverSync().child(dir)
+    setStore("session", (list: Session[]) => {
+      const result = Binary.search(list, info.id, (item) => item.id)
+      const next = [...list]
+      if (result.found) {
+        next[result.index] = info
+        return next
+      }
+      next.splice(result.index, 0, info)
+      return next
+    })
+  }
+
+  const submit = async (event: Event, delivery: "steer" | "queue"): Promise<boolean> => {
+    event.preventDefault()
+    if (input.chatOnly && (!input.sessionID?.() || !input.info())) return false
+
+    const target = prompt.capture()
+    const submission = createPromptSubmissionState({
+      target,
+      prompt: target.current(),
+      context: target.context.items().slice(),
+    })
+    const currentPrompt = submission.prompt
+    const context = submission.context
+    const text = currentPrompt.map((part) => ("content" in part ? part.content : "")).join("")
+    const images = input.imageAttachments().slice()
+    const mode = input.mode()
+
+    if (text.trim().length === 0 && images.length === 0 && input.commentCount() === 0) {
+      if (input.working()) await scheduler.interrupt()
+      return false
+    }
+
+    if ((input.contextAttachmentStore?.pendingCount() ?? 0) > 0) {
+      showToast({ title: language.t("prompt.ctxpack.pending") })
+      return false
+    }
+
+    const commandName = text.startsWith("/") ? text.split(" ")[0].slice(1) : undefined
+    const skillUnsupported =
+      mode === "shell" ||
+      (commandName !== undefined && sync().data.command.some((command) => command.name === commandName))
+    if (!input.chatOnly && hasSelectedSkill(currentPrompt) && skillUnsupported) {
+      showToast({
+        title: language.t("prompt.toast.skillCommandUnsupported.title"),
+        description: language.t("prompt.toast.skillCommandUnsupported.description"),
+      })
+      return false
+    }
+
+    if (preparing) return false
+    const modelSelection = input.model ?? local.model
+    if (input.beforeSubmit) {
+      const draft = () =>
+        JSON.stringify([
+          target.current(),
+          target.context.items(),
+          input.imageAttachments(),
+          input.contextAttachmentStore?.attachments(),
+          input.contextAttachmentStore?.pendingCount(),
+          input.mode(),
+          input.chatOnly && !input.workspaceModels
+            ? [modelSelection.current()?.provider.id, modelSelection.current()?.id, modelSelection.variant.current()]
+            : undefined,
+        ])
+      const snapshot = draft()
+      preparing = true
+      try {
+        await input.beforeSubmit()
+        // Edits made during synchronization stay available for the next explicit send.
+        if (prompt.capture() !== target || draft() !== snapshot) return false
+      } finally {
+        preparing = false
+      }
+    }
+
+    const bound = input.workspaceModels ? input.info() : undefined
+    // Workspace requests inherit the host configuration; these values only label the optimistic row.
+    const currentModel = input.workspaceModels
+      ? { id: bound?.model?.id ?? "", provider: { id: bound?.model?.providerID ?? "" } }
+      : modelSelection.current()
+    const currentAgent = input.workspaceModels
+      ? { name: bound?.agent ?? "" }
+      : input.agent
+        ? { name: input.agent() ?? "" }
+        : local.agent.current()
+    const variant = input.workspaceModels ? bound?.model?.variant : modelSelection.variant.current()
+    if ((input.workspaceModels && !bound) || !currentModel || !currentAgent) {
+      showToast({
+        title: language.t("prompt.toast.modelAgentRequired.title"),
+        description: language.t("prompt.toast.modelAgentRequired.description"),
+      })
+      return false
+    }
+
+    input.addToHistory(currentPrompt, mode)
+    input.resetHistoryNavigation()
+
+    const projectDirectory = sdk().directory
+    const permissionState = permission.currentServerState()
+    const isNewSession = !(input.sessionID ? input.sessionID() : params.id)
+    const shouldAutoAccept = isNewSession && input.autoAccept()
+    const worktreeSelection = input.newSessionWorktree?.() || "main"
+
+    let sessionDirectory = projectDirectory
+    let client = sdk().client
+
+    if (isNewSession) {
+      if (worktreeSelection === "create") {
+        const createdWorktree = await client.worktree
+          .create({ directory: projectDirectory })
+          .then((x) => x.data)
+          .catch((err) => {
+            showToast({
+              title: language.t("prompt.toast.worktreeCreateFailed.title"),
+              description: errorMessage(err),
+            })
+            return undefined
+          })
+
+        if (!createdWorktree?.directory) {
+          showToast({
+            title: language.t("prompt.toast.worktreeCreateFailed.title"),
+            description: language.t("common.requestFailed"),
+          })
+          return false
+        }
+        WorktreeState.pending(sdk().scope, createdWorktree.directory)
+        sessionDirectory = createdWorktree.directory
+      }
+
+      if (worktreeSelection !== "main" && worktreeSelection !== "create") {
+        sessionDirectory = worktreeSelection
+      }
+
+      if (sessionDirectory !== projectDirectory) {
+        client = sdk().createClient({
+          directory: sessionDirectory,
+          throwOnError: true,
+        })
+        serverSync().child(sessionDirectory)
+      }
+
+      input.onNewSessionWorktreeReset?.()
+    }
+
+    let session = input.info()
+    if (!session && isNewSession) {
+      const created = await sdk()
+        .api.session.create({
+          agent: currentAgent.name,
+          model: { id: currentModel.id, providerID: currentModel.provider.id, variant },
+          location: { directory: sessionDirectory },
+        })
+        .then(normalizeSessionInfo)
+        .catch((err) => {
+          showToast({
+            title: language.t("prompt.toast.sessionCreateFailed.title"),
+            description: errorMessage(err),
+          })
+          return undefined
+        })
+      if (created) {
+        seed(sessionDirectory, created)
+        session = created
+        await startTransition(() => {
+          if (!session) return
+          if (shouldAutoAccept) permissionState.enableAutoAccept(session.id, sessionDirectory)
+          local.session.promote(sessionDirectory, session.id, {
+            agent: currentAgent.name,
+            model: { providerID: currentModel.provider.id, modelID: currentModel.id },
+            variant: variant ?? null,
+          })
+          layout.handoff.setTabs(base64Encode(sessionDirectory), session.id)
+          const draftID = search.draftId
+          if (draftID) tabs.promoteDraft(draftID, { server: tabs.draft(draftID).server, sessionId: session.id })
+          else navigate(`/${base64Encode(sessionDirectory)}/session/${session.id}`)
+          submission.retarget(prompt.capture({ dir: base64Encode(sessionDirectory), id: session.id }))
+        })
+      }
+    }
+    if (!session) {
+      showToast({
+        title: language.t("prompt.toast.promptSendFailed.title"),
+        description: language.t("prompt.toast.promptSendFailed.description"),
+      })
+      return false
+    }
+
+    const model = {
+      modelID: currentModel.id,
+      providerID: currentModel.provider.id,
+    }
+    const agent = currentAgent.name
+    const draft: FollowupDraft = {
+      sessionID: session.id,
+      sessionDirectory,
+      prompt: currentPrompt,
+      context,
+      agent,
+      model,
+      variant,
+      workspaceModels: input.workspaceModels,
+      chatOnly: input.chatOnly,
+    }
+
+    const clearInput = () => {
+      submission.clear()
+      input.setMode("normal")
+      input.setPopover(null)
+    }
+
+    const restoreInput = () => {
+      const restored = submission.restore()
+      if (!restored) return false
+      restored.target.set(restored.prompt, input.promptLength(restored.prompt))
+      if (!submission.current(prompt.capture())) return true
+      input.setMode(mode)
+      input.setPopover(null)
+      requestAnimationFrame(() => {
+        const editor = input.editor()
+        if (!editor) return
+        editor.focus()
+        setCursorPosition(editor, input.promptLength(currentPrompt))
+        input.queueScroll()
+      })
+      return true
+    }
+
+    input.onSubmit?.()
+
+    const hasReadyContextAttachments = () =>
+      input.contextAttachmentStore?.attachments().some((attachment) => attachment.status === "ready") ?? false
+
+    if (mode === "shell") {
+      if (hasReadyContextAttachments()) {
+        showToast({ title: CTXPACK_COMMAND_REJECTION })
+        return false
+      }
+      clearInput()
+      const eventID = Event.ID.create()
+      sdk()
+        .api.session.shell({
+          sessionID: session.id,
+          id: eventID,
+          command: text,
+          ...(!input.workspaceModels && { agent, model }),
+        })
+        .catch((err) => {
+          showToast({
+            title: language.t("prompt.toast.shellSendFailed.title"),
+            description: errorMessage(err),
+          })
+          restoreInput()
+        })
+      return true
+    }
+
+    if (!input.chatOnly && text.startsWith("/")) {
+      const [cmdName, ...args] = text.split(" ")
+      const commandName = cmdName.slice(1)
+      const customCommand = sync().data.command.find((c) => c.name === commandName)
+      if (customCommand) {
+        if (hasReadyContextAttachments()) {
+          showToast({ title: CTXPACK_COMMAND_REJECTION })
+          return false
+        }
+        clearInput()
+        const messageID = Identifier.ascending("message")
+        serverSync().session.set("session_status", session.id, { type: "busy" })
+        sdk()
+          .api.session.command({
+            sessionID: session.id,
+            id: messageID,
+            command: commandName,
+            arguments: args.join(" "),
+            ...(!input.workspaceModels && {
+              agent,
+              model: { id: model.modelID, providerID: model.providerID, variant },
+            }),
+            files: await Promise.all(
+              images.map(async (attachment) => ({
+                uri: await blobDataUrl(attachment.blob, attachment.mime),
+                name: attachment.filename,
+              })),
+            ),
+          })
+          .catch((err) => {
+            serverSync().session.set("session_status", session.id, { type: "idle" })
+            showToast({
+              title: language.t("prompt.toast.commandSendFailed.title"),
+              description: formatServerError(err, language.t, language.t("common.requestFailed")),
+            })
+            restoreInput()
+          })
+        return true
+      }
+    }
+
+    const commentItems = context.filter((item) => item.type === "file" && !!item.comment?.trim())
+    const messageID = Identifier.ascending("message")
+
+    const removeOptimisticMessage = () => {
+      sync().session.optimistic.remove({
+        directory: sessionDirectory,
+        sessionID: session.id,
+        messageID,
+      })
+    }
+
+    for (const item of commentItems) submission.target().context.remove(item.key)
+    clearInput()
+
+    const contextAttachmentStore = input.contextAttachmentStore
+    const attachmentSnapshot: readonly ContextAttachmentDraft[] =
+      contextAttachmentStore?.attachments().filter((attachment) => attachment.status === "ready") ?? []
+
+    const waitForWorktree = async () => {
+      const worktree = WorktreeState.get(sdk().scope, sessionDirectory)
+      if (!worktree || worktree.status !== "pending") return true
+
+      if (sessionDirectory === projectDirectory) {
+        sync().set("session_status", session.id, { type: "busy" })
+      }
+
+      const controller = new AbortController()
+      const cleanup = () => {
+        if (sessionDirectory === projectDirectory) {
+          sync().set("session_status", session.id, { type: "idle" })
+        }
+        removeOptimisticMessage()
+        contextAttachmentStore?.restoreAfterFailure(attachmentSnapshot)
+        if (restoreInput()) restoreCommentItems(submission.target(), commentItems)
+      }
+
+      pending.set(pendingKey(session.id), { abort: controller, cleanup })
+
+      const abortWait = new Promise<Awaited<ReturnType<typeof WorktreeState.wait>>>((resolve) => {
+        if (controller.signal.aborted) {
+          resolve({ status: "failed", message: "aborted" })
+          return
+        }
+        controller.signal.addEventListener(
+          "abort",
+          () => {
+            resolve({ status: "failed", message: "aborted" })
+          },
+          { once: true },
+        )
+      })
+
+      const timeoutMs = 5 * 60 * 1000
+      const timer = { id: undefined as number | undefined }
+      const timeout = new Promise<Awaited<ReturnType<typeof WorktreeState.wait>>>((resolve) => {
+        timer.id = window.setTimeout(() => {
+          resolve({
+            status: "failed",
+            message: language.t("workspace.error.stillPreparing"),
+          })
+        }, timeoutMs)
+      })
+
+      const result = await Promise.race([
+        WorktreeState.wait(sdk().scope, sessionDirectory),
+        abortWait,
+        timeout,
+      ]).finally(() => {
+        if (timer.id === undefined) return
+        clearTimeout(timer.id)
+      })
+      pending.delete(pendingKey(session.id))
+      if (controller.signal.aborted) return false
+      if (result.status === "failed") throw new Error(result.message)
+      return true
+    }
+
+    emitPromptDelivery({
+      status: "sending",
+      directory: sessionDirectory,
+      sessionID: session.id,
+      messageID,
+      message: text,
+    })
+    try {
+      const admitted = await sendFollowupDraft({
+        api: (input.chatOnly ? sdk().currentApi : sdk().api).session,
+        sync: sync(),
+        serverSync: serverSync(),
+        draft,
+        messageID,
+        optimisticBusy: delivery !== "queue" && sessionDirectory === projectDirectory,
+        delivery,
+        before: waitForWorktree,
+        contextAttachments: attachmentSnapshot
+          .filter((attachment) => attachment.status === "ready")
+          .map(toSessionContextAttachmentInput),
+        skillCommandRejection: {
+          title: language.t("prompt.toast.skillCommandUnsupported.title"),
+          description: language.t("prompt.toast.skillCommandUnsupported.description"),
+        },
+      })
+      if (!admitted) return false
+      contextAttachmentStore?.clearAfterAdmission(attachmentSnapshot)
+      return true
+    } catch (err) {
+      pending.delete(pendingKey(session.id))
+      if (sessionDirectory === projectDirectory) {
+        sync().set("session_status", session.id, { type: "idle" })
+      }
+      emitPromptDelivery({
+        status: "failed",
+        directory: sessionDirectory,
+        sessionID: session.id,
+        messageID,
+        message: text,
+        error: errorMessage(err),
+      })
+      removeOptimisticMessage()
+      contextAttachmentStore?.restoreAfterFailure(attachmentSnapshot)
+      if (restoreInput()) restoreCommentItems(submission.target(), commentItems)
+      throw err
+    }
+  }
+
+  const scheduler = createMsgScheduler<Event>({
+    send: submit,
+    interrupt,
+    onRejected: (action, error) =>
+      showToast({
+        title:
+          action === "interrupt"
+            ? language.t("common.requestFailed")
+            : language.t("prompt.toast.promptSendFailed.title"),
+        description: formatServerError(error, language.t, language.t("common.requestFailed")),
+      }),
+  })
+
+  return {
+    abort: scheduler.interrupt,
+    handleSubmit: scheduler.steer,
+    queueSubmit: scheduler.queue,
+  }
+}
+import { emitPromptDelivery } from "./delivery-events"

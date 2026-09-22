@@ -1,0 +1,217 @@
+/*
+  MasterAgent block shell
+  Presentational chrome for the builtin:master-agent canvas block: embeds the
+  existing session surface behind status
+  panels, matching the canvas card art style via its CSS variables.
+*/
+
+.master-agent-shell {
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: transparent;
+}
+
+.master-agent-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.master-agent-session-slot {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* The embedded session surface fills the slot without double-framing itself. */
+.master-agent-session-slot > * {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.master-agent-footer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--canvas-line);
+  background: color-mix(in srgb, var(--canvas-surface-solid) 65%, transparent);
+}
+
+.master-agent-actions {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.master-agent-reset-reason {
+  max-width: 200px;
+  overflow: hidden;
+  color: var(--canvas-faint);
+  font-size: 10px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.master-agent-button {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: var(--canvas-muted);
+  background: transparent;
+  font-size: 11px;
+  font-weight: 720;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.master-agent-button:hover:not(:disabled) {
+  color: var(--canvas-text);
+  background: var(--canvas-surface-hover);
+  border-color: var(--canvas-line-strong);
+}
+
+.master-agent-button:disabled {
+  color: var(--canvas-faint);
+  border-color: transparent;
+  background: var(--canvas-surface-soft);
+  cursor: not-allowed;
+}
+
+.master-agent-button.primary {
+  color: color-mix(in srgb, var(--accent, var(--canvas-purple)) 35%, var(--canvas-text));
+  border-color: color-mix(in srgb, var(--accent, var(--canvas-purple)) 32%, transparent);
+  background: color-mix(in srgb, var(--accent, var(--canvas-purple)) 11%, transparent);
+}
+
+.master-agent-button.primary:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent, var(--canvas-purple)) 48%, transparent);
+  background: color-mix(in srgb, var(--accent, var(--canvas-purple)) 16%, transparent);
+}
+
+.master-agent-button.primary:disabled {
+  color: var(--canvas-faint);
+  background: var(--canvas-surface-soft);
+}
+
+/* Status panels */
+
+.master-agent-status {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: safe center;
+  gap: 10px;
+  padding: 20px;
+  overflow: auto;
+  text-align: center;
+}
+
+.master-agent-status-icon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  border-radius: 15px;
+  color: color-mix(in srgb, var(--accent, var(--canvas-purple)) 85%, var(--canvas-text));
+  background: color-mix(in srgb, var(--accent, var(--canvas-purple)) 14%, transparent);
+}
+
+.master-agent-status-icon svg {
+  width: 21px;
+  height: 21px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.master-agent-status.is-loading .master-agent-status-icon {
+  animation: master-agent-spin 900ms linear infinite;
+}
+
+.master-agent-status.is-denied .master-agent-status-icon {
+  color: color-mix(in srgb, var(--canvas-pink) 85%, var(--canvas-text));
+  background: color-mix(in srgb, var(--canvas-pink) 14%, transparent);
+}
+
+.master-agent-status.is-error .master-agent-status-icon {
+  color: color-mix(in srgb, var(--canvas-yellow) 85%, var(--canvas-text));
+  background: color-mix(in srgb, var(--canvas-yellow) 14%, transparent);
+}
+
+@keyframes master-agent-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.master-agent-status-title {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: var(--canvas-text);
+  font-size: 13px;
+  font-weight: 820;
+}
+
+.master-agent-status-note {
+  max-width: min(260px, 100%);
+  overflow-wrap: anywhere;
+  color: var(--canvas-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.master-agent-retry-button {
+  margin-top: 4px;
+  padding: 9px 15px;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--canvas-purple)) 38%, transparent);
+  border-radius: 12px;
+  color: color-mix(in srgb, var(--accent, var(--canvas-purple)) 35%, var(--canvas-text));
+  background: color-mix(in srgb, var(--accent, var(--canvas-purple)) 18%, var(--canvas-surface-solid));
+  font-size: 11px;
+  font-weight: 780;
+  cursor: pointer;
+}
+
+@media (pointer: coarse) {
+  .master-agent-button,
+  .master-agent-retry-button {
+    min-height: 36px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .master-agent-status.is-loading .master-agent-status-icon {
+    animation: none;
+  }
+}

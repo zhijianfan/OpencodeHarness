@@ -1,0 +1,181 @@
+// Workspace-wide Coder model controller: owns the coderModel, pending, and
+// error signals for the workspace and pushes updates through the
+// manager-provided port. The server response is authoritative; optimistic
+// results are dropped when stale and rolled back on failure.
+
+import { createSignal, type Accessor } from "solid-js"
+
+export type CoderTaskPermission = "allow" | "deny" | "ask" | "default"
+
+export type CoderModelError<Model> =
+  | { type: "permission-denied" }
+  | { type: "model-unavailable"; model: Model }
+  | { type: "no-workspace" }
+  | { type: "patch-failed"; cause: unknown }
+
+export interface CoderControllerInput<Model> {
+  workspaceID: () => string | undefined
+  ready?: () => boolean
+  coderModel: () => Model | null
+  patchCoderModel: (
+    workspaceID: string,
+    coderModel: Model | null,
+    signal?: AbortSignal,
+  ) => Promise<{ coderModel: Model | null }>
+  onServerModel?: (model: Model | null) => void
+  onIntent?: () => void
+  taskPermission: () => CoderTaskPermission
+  isModelAvailable: (model: Model) => boolean
+}
+
+export interface CoderController<Model> {
+  model: Accessor<Model | null>
+  enabled: Accessor<boolean>
+  pending: Accessor<boolean>
+  error: Accessor<unknown | null>
+  set: (model: Model) => Promise<void>
+  clear: () => Promise<void>
+  retry: () => Promise<void>
+}
+
+export interface CoderControllerHost<Model> extends CoderController<Model> {
+  hydrate: (model: Model | null) => void
+  waitForSelection: () => Promise<void>
+}
+
+export function createCoderController<Model>(input: CoderControllerInput<Model>): CoderControllerHost<Model> {
+  const [model, setModelState] = createSignal<Model | null>(input.coderModel())
+  // Generic Model could itself be callable, which would make Solid's Setter
+  // treat a plain value as an updater; route through an updater explicitly so
+  // `setModel` accepts any Model | null.
+  const setModel = (value: Model | null) => setModelState(() => value)
+  const [pending, setPending] = createSignal(false)
+  const [error, setError] = createSignal<unknown | null>(null)
+  const enabled = () => model() !== null
+
+  let requestSeq = 0
+  let inflight: AbortController | undefined
+  let selection: Promise<void> | undefined
+  let lastRequest: { op: "set"; model: Model } | { op: "clear" } | undefined
+
+  function fail(coderError: CoderModelError<Model>): never {
+    setError(coderError)
+    throw coderError
+  }
+
+  function requireWorkspace(): string {
+    const workspaceID = input.workspaceID()
+    if (!workspaceID || input.ready?.() === false) fail({ type: "no-workspace" })
+    return workspaceID
+  }
+
+  function requirePermission() {
+    if (input.taskPermission() === "deny") fail({ type: "permission-denied" })
+  }
+
+  function patch(workspaceID: string, next: Model | null) {
+    const saving = performPatch(workspaceID, next).finally(() => {
+      if (selection === saving) selection = undefined
+    })
+    selection = saving
+    return saving
+  }
+
+  async function performPatch(workspaceID: string, next: Model | null) {
+    const id = ++requestSeq
+    input.onIntent?.()
+    inflight?.abort()
+    inflight = new AbortController()
+    setPending(true)
+    setError(null)
+    setModel(next)
+    try {
+      const result = await input.patchCoderModel(
+        workspaceID,
+        next,
+        inflight.signal,
+      )
+      if (id !== requestSeq) return
+      if (input.workspaceID() !== workspaceID) {
+        setModel(input.coderModel())
+        return
+      }
+      setModel(result.coderModel)
+      input.onServerModel?.(result.coderModel)
+    } catch (cause) {
+      if (id !== requestSeq || input.workspaceID() !== workspaceID) return
+      setModel(input.coderModel())
+      setError({ type: "patch-failed", cause })
+      throw cause
+    } finally {
+      if (id === requestSeq) setPending(false)
+    }
+  }
+
+  async function set(modelToSet: Model) {
+    const workspaceID = requireWorkspace()
+    requirePermission()
+    if (!input.isModelAvailable(modelToSet)) {
+      fail({ type: "model-unavailable", model: modelToSet })
+    }
+    lastRequest = { op: "set", model: modelToSet }
+    await patch(workspaceID, modelToSet)
+  }
+
+  async function clear() {
+    const workspaceID = requireWorkspace()
+    requirePermission()
+    lastRequest = { op: "clear" }
+    await patch(workspaceID, null)
+  }
+
+  async function retry() {
+    if (pending()) return
+    const request = lastRequest
+    if (!request) {
+      setError(null)
+      const workspaceID = input.workspaceID()
+      if (!workspaceID) fail({ type: "no-workspace" })
+      setModel(input.coderModel())
+      return
+    }
+    if (request.op === "set") {
+      await set(request.model)
+      return
+    }
+    await clear()
+  }
+
+  function hydrate(serverModel: Model | null) {
+    requestSeq++
+    input.onIntent?.()
+    inflight?.abort()
+    inflight = undefined
+    lastRequest = undefined
+    setPending(false)
+    setError(null)
+    setModel(serverModel)
+  }
+
+  async function waitForSelection() {
+    while (true) {
+      const id = requestSeq
+      const result = await selection?.then(() => undefined, (error: unknown) => ({ error }))
+      if (id !== requestSeq) continue
+      if (result) throw result.error
+      return
+    }
+  }
+
+  return {
+    model,
+    enabled,
+    pending,
+    error,
+    hydrate,
+    waitForSelection,
+    set,
+    clear,
+    retry,
+  }
+}
