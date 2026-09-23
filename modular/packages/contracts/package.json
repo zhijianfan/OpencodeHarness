@@ -1,0 +1,7 @@
+{
+  "name": "@cybermastery/contracts",
+  "private": true,
+  "type": "module",
+  "exports": {"./layout": "./src/layout.ts", "./routes": "./src/routes.ts"},
+  "scripts": {"typecheck": "tsgo --noEmit", "test": "bun test src"}
+}

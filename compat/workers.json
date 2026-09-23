@@ -1,0 +1,20 @@
+{
+  "provider": "opencode-go",
+  "model": "deepseek-v4.1-flash",
+  "requestedEffort": "ExtraHigh",
+  "advertisedVariants": ["low", "high", "max"],
+  "actualVariant": "max",
+  "dispatch": "fresh OpenCode CLI worker sessions with self-contained briefs and disjoint file ownership",
+  "defaultResponseCapIssue": "Two first-wave workers exhausted 32000 reasoning tokens before producing code; resumed at 65536 output cap without changing model or effort.",
+  "workers": [
+    {"task": "contracts", "wave": 1, "result": "implemented; reviewed and validated"},
+    {"task": "canvas", "wave": 1, "result": "implemented after response-cap retry; master corrected tests; unavailable read attempts returned no source"},
+    {"task": "provenance", "wave": 1, "result": "implemented after response-cap retry; master removed hook-skipping flags from fixture commands before running tests"},
+    {"task": "client", "wave": 2, "result": "implemented; master corrected fetch typing and stream cleanup"},
+    {"task": "web", "wave": 2, "result": "implemented; master added stale-response edit guards and validated real browsers"},
+    {"task": "checkpoint", "wave": 3, "result": "implemented; exact canonical format reviewed and validated"},
+    {"task": "history", "wave": 3, "result": "implemented; master corrected tool input access, exact hash matching and schema fixtures, and replaced speculative fixture probing with the real checkpoint constructor"}
+  ],
+  "masterOwned": ["manifests", "native pin and source integrity", "baseline capture", "package installation", "domain and persistence", "admission facade", "HTTP composition", "Event-service mediation", "private projection restore", "provider and compaction adapters", "integration verification", "release gate decisions"],
+  "nativeSourceEditsByWorkers": false
+}

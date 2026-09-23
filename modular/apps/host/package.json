@@ -1,0 +1,12 @@
+{
+  "name": "@cybermastery/host",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@cybermastery/adapters-opencode": "workspace:*",
+    "@cybermastery/domain": "workspace:*",
+    "@cybermastery/contracts": "workspace:*",
+    "@cybermastery/client": "workspace:*"
+  },
+  "scripts": {"typecheck": "tsgo --noEmit", "start": "bun run src/start.ts", "test": "bun test test"}
+}

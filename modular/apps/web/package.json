@@ -1,0 +1,13 @@
+{
+  "name": "@cybermastery/web",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@cybermastery/client": "workspace:*",
+    "@cybermastery/contracts": "workspace:*",
+    "@cybermastery/canvas": "workspace:*",
+    "solid-js": "1.9.10"
+  },
+  "devDependencies": {"vite": "7.1.4", "vite-plugin-solid": "2.11.10", "playwright": "1.59.1"},
+  "scripts": {"typecheck": "tsgo --noEmit", "build": "vite build --configLoader runner", "dev": "vite --configLoader runner --port 4445", "test:smoke": "bun test test --timeout 30000"}
+}

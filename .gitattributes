@@ -1,2 +1,7 @@
 packages/core/migration/**/snapshot.json linguist-generated
 packages/core/src/database/migration.gen.ts linguist-generated
+
+# Frozen baseline evidence is not an active patch queue. Preserve its exact bytes.
+compat/baseline/*.diff -text -diff
+compat/baseline/*.patch -text -diff
+compat/baseline/*-tree.txt -text

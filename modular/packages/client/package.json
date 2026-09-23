@@ -1,0 +1,8 @@
+{
+  "name": "@cybermastery/client",
+  "private": true,
+  "type": "module",
+  "exports": {".": "./src/client.ts"},
+  "dependencies": {"@cybermastery/contracts": "workspace:*"},
+  "scripts": {"generate": "bun run script/generate.ts", "typecheck": "tsgo --noEmit", "test": "bun test src"}
+}

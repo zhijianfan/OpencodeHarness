@@ -1,0 +1,147 @@
+diff --git a/.gitmodules b/.gitmodules
+index 633058e..07c833e 100644
+--- a/.gitmodules
++++ b/.gitmodules
+@@ -1,3 +1,6 @@
+ [submodule "vendor/superpowers"]
+ 	path = vendor/superpowers
+ 	url = https://github.com/obra/superpowers.git
++[submodule "vendor/opencode"]
++	path = vendor/opencode
++	url = https://github.com/anomalyco/opencode.git
+diff --git a/.husky/pre-push b/.husky/pre-push
+old mode 100644
+new mode 100755
+diff --git a/github/script/publish b/github/script/publish
+old mode 100644
+new mode 100755
+diff --git a/github/script/release b/github/script/release
+old mode 100644
+new mode 100755
+diff --git a/install b/install
+old mode 100644
+new mode 100755
+diff --git a/packages/cli/script/build.ts b/packages/cli/script/build.ts
+old mode 100644
+new mode 100755
+diff --git a/packages/cli/script/generate.ts b/packages/cli/script/generate.ts
+old mode 100644
+new mode 100755
+diff --git a/packages/cli/script/publish.ts b/packages/cli/script/publish.ts
+old mode 100644
+new mode 100755
+diff --git a/packages/cli/src/index.ts b/packages/cli/src/index.ts
+old mode 100644
+new mode 100755
+diff --git a/packages/console/app/script/generate-sitemap.ts b/packages/console/app/script/generate-sitemap.ts
+old mode 100644
+new mode 100755
+diff --git a/packages/console/core/script/promote-limits.ts b/packages/console/core/script/promote-limits.ts
+old mode 100644
+new mode 100755
+diff --git a/packages/console/core/script/promote-models.ts b/packages/console/core/script/promote-models.ts
+old mode 100644
+new mode 100755
+diff --git a/packages/console/core/script/pull-models.ts b/packages/console/core/script/pull-models.ts
+old mode 100644
+new mode 100755
+diff --git a/packages/console/core/script/update-limits.ts b/packages/console/core/script/update-limits.ts
+old mode 100644
+new mode 100755
+diff --git a/packages/console/core/script/update-models.ts b/packages/console/core/script/update-models.ts
+old mode 100644
+new mode 100755
+diff --git a/packages/core/script/fix-node-pty.ts b/packages/core/script/fix-node-pty.ts
+old mode 100644
+new mode 100755
+diff --git a/packages/desktop/scripts/prepare.ts b/packages/desktop/scripts/prepare.ts
+old mode 100644
+new mode 100755
+diff --git a/packages/opencode/bin/opencode b/packages/opencode/bin/opencode
+old mode 100644
+new mode 100755
+diff --git a/packages/opencode/script/build.ts b/packages/opencode/script/build.ts
+old mode 100644
+new mode 100755
+diff --git a/packages/opencode/script/publish.ts b/packages/opencode/script/publish.ts
+old mode 100644
+new mode 100755
+diff --git a/packages/opencode/script/run-workspace-server b/packages/opencode/script/run-workspace-server
+old mode 100644
+new mode 100755
+diff --git a/packages/opencode/script/schema.ts b/packages/opencode/script/schema.ts
+old mode 100644
+new mode 100755
+diff --git a/packages/opencode/script/time.ts b/packages/opencode/script/time.ts
+old mode 100644
+new mode 100755
+diff --git a/packages/opencode/script/trace-imports.ts b/packages/opencode/script/trace-imports.ts
+old mode 100644
+new mode 100755
+diff --git a/packages/plugin/script/publish.ts b/packages/plugin/script/publish.ts
+old mode 100644
+new mode 100755
+diff --git a/packages/sdk/js/script/build.ts b/packages/sdk/js/script/build.ts
+old mode 100644
+new mode 100755
+diff --git a/packages/sdk/js/script/publish.ts b/packages/sdk/js/script/publish.ts
+old mode 100644
+new mode 100755
+diff --git a/packages/ui/src/assets/icons/file-types/systemd.svg b/packages/ui/src/assets/icons/file-types/systemd.svg
+old mode 100644
+new mode 100755
+diff --git a/packages/ui/src/assets/icons/file-types/systemd_light.svg b/packages/ui/src/assets/icons/file-types/systemd_light.svg
+old mode 100644
+new mode 100755
+diff --git a/patches/install-korean-ime-fix.sh b/patches/install-korean-ime-fix.sh
+old mode 100644
+new mode 100755
+diff --git a/script/beta.ts b/script/beta.ts
+old mode 100644
+new mode 100755
+diff --git a/script/changelog.ts b/script/changelog.ts
+old mode 100644
+new mode 100755
+diff --git a/script/duplicate-pr.ts b/script/duplicate-pr.ts
+old mode 100644
+new mode 100755
+diff --git a/script/format.ts b/script/format.ts
+old mode 100644
+new mode 100755
+diff --git a/script/generate.ts b/script/generate.ts
+old mode 100644
+new mode 100755
+diff --git a/script/github/close-issues.ts b/script/github/close-issues.ts
+old mode 100644
+new mode 100755
+diff --git a/script/github/close-prs.ts b/script/github/close-prs.ts
+old mode 100644
+new mode 100755
+diff --git a/script/hooks b/script/hooks
+old mode 100644
+new mode 100755
+diff --git a/script/publish.ts b/script/publish.ts
+old mode 100644
+new mode 100755
+diff --git a/script/release b/script/release
+old mode 100644
+new mode 100755
+diff --git a/script/stats.ts b/script/stats.ts
+old mode 100644
+new mode 100755
+diff --git a/script/version.ts b/script/version.ts
+old mode 100644
+new mode 100755
+diff --git a/sdks/vscode/script/publish b/sdks/vscode/script/publish
+old mode 100644
+new mode 100755
+diff --git a/sdks/vscode/script/release b/sdks/vscode/script/release
+old mode 100644
+new mode 100755
+diff --git a/vendor/opencode b/vendor/opencode
+new file mode 160000
+index 0000000..b02acc1
+--- /dev/null
++++ b/vendor/opencode
+@@ -0,0 +1 @@
++Subproject commit b02acc1e30ef55f7f181fec8d2f241d26f022683

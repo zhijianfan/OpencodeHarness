@@ -1,0 +1,6 @@
+{
+  "repository": "https://github.com/anomalyco/opencode.git",
+  "commit": "b02acc1e30ef55f7f181fec8d2f241d26f022683",
+  "path": "vendor/opencode",
+  "selection": "Exact official comparison commit reviewed before extraction; not tracking dev."
+}

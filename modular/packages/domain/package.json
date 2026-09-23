@@ -1,0 +1,8 @@
+{
+  "name": "@cybermastery/domain",
+  "private": true,
+  "type": "module",
+  "exports": {"./layout": "./src/layout.ts"},
+  "dependencies": {"@cybermastery/contracts": "workspace:*"},
+  "scripts": {"typecheck": "tsgo --noEmit"}
+}

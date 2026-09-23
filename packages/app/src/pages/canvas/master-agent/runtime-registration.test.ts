@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test"
+import { Schema } from "effect"
+import { MasterAgent } from "@opencode-ai/schema/master-agent"
+import { Workspace } from "@opencode-ai/schema/workspace"
+import { Session } from "@opencode-ai/schema/session"
+import { createBlockRuntimeEventRouter } from "../runtime/event-router"
 import { masterAgentRuntimeRegistration } from "./runtime-registration"
-import type { MasterAgent } from "./types"
 
-function binding(blockID: string): MasterAgent.Binding {
+function binding(blockID: string) {
   return {
     workspaceID: "ws-1",
     blockID,
@@ -67,6 +71,26 @@ function fakeServices() {
 }
 
 describe("masterAgentRuntimeRegistration", () => {
+  test("canonical binding payload reaches one matching block without a functionalityID", () => {
+    const workspaceID = Workspace.ID.create()
+    const data = Schema.decodeUnknownSync(MasterAgent.BindingUpdated.data)({
+      workspaceID, blockID: "block-1", sessionID: Session.ID.create(), generation: 1, revision: 3,
+    })
+    type Listener = Parameters<Parameters<typeof createBlockRuntimeEventRouter>[0]["listen"]>[0]
+    const transport: { deliver?: Listener } = {}
+    const router = createBlockRuntimeEventRouter({ listen(handler) { transport.deliver = handler; return () => {} } })
+    const deliveries = { matching: 0, otherBlock: 0, otherWorkspace: 0 }
+    const resolved = { workspaceID, blockID: data.blockID, binding: { ...binding(data.blockID), ...data } }
+    for (const key of masterAgentRuntimeRegistration.eventKeys?.(resolved) ?? []) {
+      router.on(key, () => { deliveries.matching++ })
+    }
+    router.on({ type: MasterAgent.BindingUpdated.type, workspaceID, blockID: "other" }, () => { deliveries.otherBlock++ })
+    router.on({ type: MasterAgent.BindingUpdated.type, workspaceID: Workspace.ID.create(), blockID: data.blockID }, () => { deliveries.otherWorkspace++ })
+    transport.deliver?.({ details: { type: MasterAgent.BindingUpdated.type, properties: data } })
+    expect(deliveries).toEqual({ matching: 1, otherBlock: 0, otherWorkspace: 0 })
+    router.dispose()
+  })
+
   test("mode is native with the master-agent functionality", () => {
     expect(masterAgentRuntimeRegistration.mode).toBe("native")
     expect(masterAgentRuntimeRegistration.functionalityID).toBe("builtin:master-agent")
@@ -96,7 +120,6 @@ describe("masterAgentRuntimeRegistration", () => {
         type: "workspace.master-agent.binding.updated",
         workspaceID: "ws-1",
         blockID: "b1",
-        functionalityID: "builtin:master-agent",
       },
     ])
   })

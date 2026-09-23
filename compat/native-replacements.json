@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "upstreamCommit": "b02acc1e30ef55f7f181fec8d2f241d26f022683",
+  "scope": "isolated modular proof workspace; not the production integration",
+  "integrations": [
+    {
+      "id": "proof-database-placement",
+      "classification": "extend",
+      "nativeBoundary": "Database.node -> Database.layerFromPath via AppNodeBuilder replacements",
+      "owner": "modular/packages/adapters-opencode/src/kernel.ts",
+      "behavior": "Select one explicit disposable database; native migration implementation is delegated unchanged.",
+      "evidence": "native-boundary.test.ts; layout.test.ts"
+    },
+    {
+      "id": "private-admission-facade",
+      "classification": "extend",
+      "nativeBoundary": "SessionInput.admit(events argument) -> EventV2.publish(options.commit)",
+      "owner": "modular/packages/adapters-opencode/src/admission.ts",
+      "behavior": "Authorize and freeze privately, delegate native admission, commit extension sidecar in native transaction, check exact retry, wake after commit only when requested.",
+      "limitations": ["Does not intercept stock SessionV2.prompt", "Does not cover all baseline admission entrypoints"],
+      "evidence": "native-boundary.test.ts; event-boundary.test.ts (enclosing-transaction wake deferral)"
+    },
+    {
+      "id": "private-reconstruction-and-compaction",
+      "classification": "extend",
+      "nativeBoundary": "Native toLLMMessages, LLM.updateRequest and SessionCompaction.make",
+      "owner": "modular/packages/adapters-opencode/src/provider-context.ts; compaction.ts; context-store.ts; history.ts; checkpoint.ts",
+      "behavior": "Reconstruct verified private request content and delegate native compaction with enriched history; publish only the sentinel and clean recent projection while committing private checkpoint atomically.",
+      "limitations": ["Adapters are tested directly but are not called by the stock runner's internal free-function composition", "Existing private checkpoint v1 format retained; full fork data migration remains pending"],
+      "evidence": "provider-context.test.ts; history.test.ts; checkpoint.test.ts"
+    },
+    {
+      "id": "managed-event-transactions",
+      "classification": "replace",
+      "nativeBoundary": "EventV2.node, EventV2.layerWith(beforeAggregateRead), native projectors and native database transactions",
+      "owner": "modular/packages/adapters-opencode/src/event-boundary.ts",
+      "delegated": ["durable event storage", "sequence and replay-owner reconciliation", "native projectors", "native durable history decoding"],
+      "replaced": ["public notification delivery timing", "durable reader fencing", "atomic replayAll wrapper", "post-commit action scheduling"],
+      "restrictions": ["Outer writes must use EventBoundary.transaction", "Batch writes cannot escape their owning fiber or kernel", "This requires entrypoint auditing before full production adoption"],
+      "assembly": "createMediatedKernel; used by the external proof host layout repository",
+      "evidence": "event-boundary.test.ts; host/static-card.test.ts"
+    },
+    {
+      "id": "private-projection-proof-transport",
+      "classification": "extend",
+      "nativeBoundary": "Mediated native replay/projectors and unchanged native Context Epoch table",
+      "owner": "modular/packages/adapters-opencode/src/projection.ts",
+      "behavior": "Atomic full-snapshot restore of public events, input sidecars, checkpoint records, requirements and epoch; independent expected digest and authorized placement; native revert cascade cleanup.",
+      "limitations": ["Format is cybermastery-private-projection/v1, not legacy fork BundleV1", "Lossy native event or epoch codec roundtrips reject", "Original paged spool/deletion-manifest/readiness transport and fork migration remain pending"],
+      "evidence": "projection.test.ts"
+    },
+    {
+      "id": "stock-runner-private-context-wiring",
+      "classification": "blocked",
+      "nativeBoundary": "SessionRunner.Service / SessionRunnerLLM.node",
+      "reason": "Stock runner loads history and constructs compaction through direct helper imports before the LLM boundary. A larger explicitly owned runner integration decision remains necessary.",
+      "review": "compat/SESSION_RUNNER_INTEGRATION_REVIEW.md"
+    }
+  ],
+  "copiedNativeProductionImplementations": [],
+  "vendorSourceModifications": []
+}

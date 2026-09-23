@@ -1,0 +1,17 @@
+{
+  "name": "cybermastery-modular",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.3.14",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "link:native": "bun run script/link-native.ts",
+    "attest:native": "bun run script/attest-native.ts",
+    "capture:baseline": "bun run script/capture-baseline.ts",
+    "verify:proof": "bun run script/verify.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.13",
+    "@typescript/native-preview": "7.0.0-dev.20251207.1"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "name": "@cybermastery/compat",
+  "private": true,
+  "type": "module",
+  "exports": {"./upstream": "./src/upstream.ts"},
+  "scripts": {"typecheck": "tsgo --noEmit", "test": "bun test src"}
+}

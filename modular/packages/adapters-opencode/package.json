@@ -1,0 +1,21 @@
+{
+  "name": "@cybermastery/adapters-opencode",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./layout": "./src/layout.ts",
+    "./capabilities": "./src/capabilities.ts"
+  },
+  "dependencies": {
+    "@cybermastery/contracts": "workspace:*",
+    "@cybermastery/domain": "workspace:*"
+  },
+  "cybermasteryNativeLinks": {
+    "@opencode-ai/core": "packages/core",
+    "@opencode-ai/schema": "packages/schema",
+    "@opencode-ai/llm": "packages/llm",
+    "effect": "resolved from native Core",
+    "drizzle-orm": "resolved from native Core"
+  },
+  "scripts": {"typecheck": "tsgo --noEmit", "test": "bun test test"}
+}

@@ -1,0 +1,1 @@
+{"extends":"../../tsconfig.json","compilerOptions":{"jsx":"preserve","jsxImportSource":"solid-js"},"include":["src/**/*.ts","src/**/*.tsx","test/**/*.ts","vite.config.ts"]}

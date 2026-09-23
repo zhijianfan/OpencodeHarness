@@ -1,0 +1,239 @@
+{
+  "capturedAt": "2026-09-23T06:41:54.750Z",
+  "scope": "modular proof workspace only; not full feature parity",
+  "release": "blocked-see-gates.json",
+  "success": true,
+  "sourceUnchanged": true,
+  "before": {
+    "commit": "b02acc1e30ef55f7f181fec8d2f241d26f022683",
+    "tree": "345786dc56ddf6ccb970f71f7200e2c85fd8b5a0",
+    "repository": "https://github.com/anomalyco/opencode.git",
+    "trackedFiles": 6626,
+    "sourceDigest": "7fca9dad9348298ba49e92f331c1b251ed396f180f5753e5b6b65a619de7e1e1"
+  },
+  "after": {
+    "commit": "b02acc1e30ef55f7f181fec8d2f241d26f022683",
+    "tree": "345786dc56ddf6ccb970f71f7200e2c85fd8b5a0",
+    "repository": "https://github.com/anomalyco/opencode.git",
+    "trackedFiles": 6626,
+    "sourceDigest": "7fca9dad9348298ba49e92f331c1b251ed396f180f5753e5b6b65a619de7e1e1"
+  },
+  "results": [
+    {
+      "cwd": "packages/contracts",
+      "command": [
+        "bun",
+        "typecheck"
+      ],
+      "exitCode": 0,
+      "pass": 0,
+      "fail": 0,
+      "skip": 0,
+      "outputHash": "ae47736bb2a9401aa9743893f2f64b9a605e65a99d78cd991a8021e0f7722d87",
+      "output": "$ tsgo --noEmit\n"
+    },
+    {
+      "cwd": "packages/contracts",
+      "command": [
+        "bun",
+        "test",
+        "src"
+      ],
+      "exitCode": 0,
+      "pass": 25,
+      "fail": 0,
+      "skip": 0,
+      "outputHash": "c08f21d7cc4336fcca70beec2090b2f800975f974803fa56b7907adb2f8ba3f2",
+      "output": "bun test v1.3.14 (0d9b296a)\n\n 25 pass\n 0 fail\n 93 expect() calls\nRan 25 tests across 1 file. [34.00ms]\n"
+    },
+    {
+      "cwd": "packages/canvas",
+      "command": [
+        "bun",
+        "typecheck"
+      ],
+      "exitCode": 0,
+      "pass": 0,
+      "fail": 0,
+      "skip": 0,
+      "outputHash": "ae47736bb2a9401aa9743893f2f64b9a605e65a99d78cd991a8021e0f7722d87",
+      "output": "$ tsgo --noEmit\n"
+    },
+    {
+      "cwd": "packages/canvas",
+      "command": [
+        "bun",
+        "test",
+        "src"
+      ],
+      "exitCode": 0,
+      "pass": 18,
+      "fail": 0,
+      "skip": 0,
+      "outputHash": "8b1a6cf3c0d32ca333cd2bac7f35995fd6822b9f303c6ec874f60ed9441469e3",
+      "output": "bun test v1.3.14 (0d9b296a)\n\n 18 pass\n 0 fail\n 66 expect() calls\nRan 18 tests across 2 files. [42.00ms]\n"
+    },
+    {
+      "cwd": "packages/compat",
+      "command": [
+        "bun",
+        "typecheck"
+      ],
+      "exitCode": 0,
+      "pass": 0,
+      "fail": 0,
+      "skip": 0,
+      "outputHash": "ae47736bb2a9401aa9743893f2f64b9a605e65a99d78cd991a8021e0f7722d87",
+      "output": "$ tsgo --noEmit\n"
+    },
+    {
+      "cwd": "packages/compat",
+      "command": [
+        "bun",
+        "test",
+        "src"
+      ],
+      "exitCode": 0,
+      "pass": 8,
+      "fail": 0,
+      "skip": 1,
+      "outputHash": "96f047f42d776403abe23189d1935f097a7caf22697fa49b60273d4af88d4362",
+      "output": "bun test v1.3.14 (0d9b296a)\n\n 8 pass\n 1 skip\n 0 fail\n 8 expect() calls\nRan 9 tests across 1 file. [2.61s]\n"
+    },
+    {
+      "cwd": "packages/domain",
+      "command": [
+        "bun",
+        "typecheck"
+      ],
+      "exitCode": 0,
+      "pass": 0,
+      "fail": 0,
+      "skip": 0,
+      "outputHash": "ae47736bb2a9401aa9743893f2f64b9a605e65a99d78cd991a8021e0f7722d87",
+      "output": "$ tsgo --noEmit\n"
+    },
+    {
+      "cwd": "packages/client",
+      "command": [
+        "bun",
+        "typecheck"
+      ],
+      "exitCode": 0,
+      "pass": 0,
+      "fail": 0,
+      "skip": 0,
+      "outputHash": "ae47736bb2a9401aa9743893f2f64b9a605e65a99d78cd991a8021e0f7722d87",
+      "output": "$ tsgo --noEmit\n"
+    },
+    {
+      "cwd": "packages/client",
+      "command": [
+        "bun",
+        "test",
+        "src"
+      ],
+      "exitCode": 0,
+      "pass": 13,
+      "fail": 0,
+      "skip": 0,
+      "outputHash": "077753a6d15b94c16198a2a8b414fa3e570b42185c45893a44a797ba23a9a493",
+      "output": "bun test v1.3.14 (0d9b296a)\n\n 13 pass\n 0 fail\n 43 expect() calls\nRan 13 tests across 1 file. [40.00ms]\n"
+    },
+    {
+      "cwd": "packages/adapters-opencode",
+      "command": [
+        "bun",
+        "typecheck"
+      ],
+      "exitCode": 0,
+      "pass": 0,
+      "fail": 0,
+      "skip": 0,
+      "outputHash": "ae47736bb2a9401aa9743893f2f64b9a605e65a99d78cd991a8021e0f7722d87",
+      "output": "$ tsgo --noEmit\n"
+    },
+    {
+      "cwd": "packages/adapters-opencode",
+      "command": [
+        "bun",
+        "test",
+        "test"
+      ],
+      "exitCode": 0,
+      "pass": 78,
+      "fail": 0,
+      "skip": 0,
+      "outputHash": "4a5dec6dbccbfd5445f1fcf576d5f7af951df181c122146e36a0ed11d100a43e",
+      "output": "bun test v1.3.14 (0d9b296a)\n\n 78 pass\n 0 fail\n 228 expect() calls\nRan 78 tests across 7 files. [3.26s]\n"
+    },
+    {
+      "cwd": "apps/host",
+      "command": [
+        "bun",
+        "typecheck"
+      ],
+      "exitCode": 0,
+      "pass": 0,
+      "fail": 0,
+      "skip": 0,
+      "outputHash": "ae47736bb2a9401aa9743893f2f64b9a605e65a99d78cd991a8021e0f7722d87",
+      "output": "$ tsgo --noEmit\n"
+    },
+    {
+      "cwd": "apps/host",
+      "command": [
+        "bun",
+        "test",
+        "test"
+      ],
+      "exitCode": 0,
+      "pass": 2,
+      "fail": 0,
+      "skip": 0,
+      "outputHash": "1688061d9fd45aa468d606200c563b13c2876a45fef722aa2f0a126a3f4ce3bb",
+      "output": "bun test v1.3.14 (0d9b296a)\n\n 2 pass\n 0 fail\n 10 expect() calls\nRan 2 tests across 1 file. [1035.00ms]\n"
+    },
+    {
+      "cwd": "apps/web",
+      "command": [
+        "bun",
+        "typecheck"
+      ],
+      "exitCode": 0,
+      "pass": 0,
+      "fail": 0,
+      "skip": 0,
+      "outputHash": "ae47736bb2a9401aa9743893f2f64b9a605e65a99d78cd991a8021e0f7722d87",
+      "output": "$ tsgo --noEmit\n"
+    },
+    {
+      "cwd": "apps/web",
+      "command": [
+        "bun",
+        "run",
+        "build"
+      ],
+      "exitCode": 0,
+      "pass": 0,
+      "fail": 0,
+      "skip": 0,
+      "outputHash": "1afb41f332d1c8a250f48a9e88e03ee716711eaf05a240f2a70f809b110bd262",
+      "output": "vite v7.1.4 building for production...\ntransforming...\n✓ 12 modules transformed.\nrendering chunks...\ncomputing gzip size...\ndist/index.html                  0.38 kB │ gzip:  0.27 kB\ndist/assets/index-nnPvlgzt.css   3.41 kB │ gzip:  1.11 kB\ndist/assets/index-BVMgu9h7.js   33.66 kB │ gzip: 11.79 kB\n✓ built in 386ms\n$ vite build --configLoader runner\n"
+    },
+    {
+      "cwd": "apps/web",
+      "command": [
+        "bun",
+        "run",
+        "test:smoke"
+      ],
+      "exitCode": 0,
+      "pass": 1,
+      "fail": 0,
+      "skip": 0,
+      "outputHash": "c5679eb657969f75b1a759a84ee59f1a091e2634f8d5666ce875258cb13e85df",
+      "output": "bun test v1.3.14 (0d9b296a)\n$ bun test test --timeout 30000\n\n 1 pass\n 0 fail\n 1 expect() calls\nRan 1 test across 1 file. [3.04s]\n"
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "upstreamCommit": "b02acc1e30ef55f7f181fec8d2f241d26f022683",
+  "toolchain": {"bun": "1.3.14", "effect": "4.0.0-beta.83"},
+  "packageConsumption": {
+    "status": "proof-passed",
+    "method": "Official workspace installed with frozen lockfile; explicit ignored node_modules links from the isolated external adapter to actual official packages and their exact Effect/Drizzle instances.",
+    "installer": "modular/script/link-native.ts",
+    "failedAlternatives": [
+      "Bun link:relative-path does not register a local link without a global link registry entry",
+      "Independent file: installation attempts to resolve native workspace:* and catalog: entries outside their native workspace"
+    ],
+    "globalPackageRegistrationRequired": false,
+    "nativeManifestEditsRequired": false,
+    "identityEvidence": "modular/packages/adapters-opencode/test/native-boundary.test.ts"
+  },
+  "proofs": {
+    "nativeServiceIdentity": "passed",
+    "nativeAtomicPublishSidecar": "passed-for-explicit-facade",
+    "privateSnapshotRetryAfterRestart": "covered-by-native-boundary-suite",
+    "allAdmissionEntrypoints": "not-proven",
+    "providerReconstruction": "adapter-tests-pass; stock-runner-wiring-not-proven",
+    "privateCompaction": "adapter-delegates-real-native-compactor; stock-runner-wiring-not-proven",
+    "atomicManagedReplay": "passed-with-explicit-Event-service-replacement",
+    "atomicPrivateReplay": "proof-format-passed; legacy-fork-transfer-compatibility-not-proven",
+    "forkDataMigration": "not-proven",
+    "hostMatrix": "proof-host-only"
+  },
+  "sourceProtection": {
+    "beforeAfterAttestation": "passed",
+    "trackedBlobVerification": "including assume-unchanged hidden edits",
+    "readOnlyBuildMount": "not-implemented; before/after hashes alone cannot detect transient rewrites"
+  }
+}

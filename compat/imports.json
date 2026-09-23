@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "upstreamCommit": "b02acc1e30ef55f7f181fec8d2f241d26f022683",
+  "productionNativeImportOwner": "modular/packages/adapters-opencode/src/",
+  "nativeExportsUsed": [
+    "@opencode-ai/core/database/database",
+    "@opencode-ai/core/effect/app-node-builder",
+    "@opencode-ai/core/effect/app-node",
+    "@opencode-ai/core/effect/layer-node",
+    "@opencode-ai/core/event",
+    "@opencode-ai/core/session/input",
+    "@opencode-ai/core/session/schema",
+    "@opencode-ai/core/session/message",
+    "@opencode-ai/core/session/projector",
+    "@opencode-ai/core/session/compaction",
+    "@opencode-ai/core/session/runner/to-llm-message",
+    "@opencode-ai/core/system-context",
+    "@opencode-ai/core/util/token",
+    "@opencode-ai/schema/session-event",
+    "@opencode-ai/schema/session-message",
+    "@opencode-ai/schema/durable-event-manifest",
+    "@opencode-ai/schema/schema",
+    "@opencode-ai/llm"
+  ],
+  "sharedPhysicalDependencies": ["effect", "drizzle-orm"],
+  "browserPackagesWithoutNativeCoreOrServerImports": [
+    "modular/apps/web/src/",
+    "modular/packages/canvas/src/",
+    "modular/packages/client/src/",
+    "modular/packages/contracts/src/"
+  ],
+  "exceptions": [
+    {"path": "modular/packages/adapters-opencode/test/", "purpose": "native boundary verification"},
+    {"path": "modular/script/link-native.ts", "purpose": "explicit official source-package installation"},
+    {"path": "modular/script/capture-baseline.ts", "purpose": "historical reference inventory; not a runtime dependency"}
+  ],
+  "stability": "Exact-pin source APIs, not a stable published-package guarantee"
+}

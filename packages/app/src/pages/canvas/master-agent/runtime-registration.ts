@@ -63,7 +63,6 @@ export const masterAgentRuntimeRegistration: BlockRuntimeRegistration<
       type: "workspace.master-agent.binding.updated",
       workspaceID: resolved.workspaceID,
       blockID: resolved.blockID,
-      functionalityID: MasterAgent.FunctionalityID,
     },
   ],
 

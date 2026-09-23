@@ -1,0 +1,46 @@
+[
+  {
+    "name": "rename-aware.diff",
+    "sha256": "eacad3a026bf83d5e036c73361611266a6054a81b20ae29379759e4ca5f883e1"
+  },
+  {
+    "name": "reference-staged.patch",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "name": "reference-unstaged.patch",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "name": "harness-staged.patch",
+    "sha256": "dbf533097dd95fde78e152afddb915971e3252d418041da4a8f0aa944792ee63"
+  },
+  {
+    "name": "harness-unstaged.patch",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "name": "reference-tree.txt",
+    "sha256": "bac1c1b5635b315b06d502c4ed5b6cbdcc5d00a2ad25e8fd4e1554e20159d31f"
+  },
+  {
+    "name": "harness-tree.txt",
+    "sha256": "be0b30446fe2887b2628ad2d63da38c5a2dbce7bb4cb488b6c838eaca28bf1c9"
+  },
+  {
+    "name": "bun.lock",
+    "sha256": "1039ec1a1a66db9e8c313c7a791b4a426bcd0f7c5863cea735ed3f73534c636e"
+  },
+  {
+    "name": ".gitmodules",
+    "sha256": "f75d2f515e93af9285743719b31a084e9f13f3bf90d51b631022858814ac3300"
+  },
+  {
+    "name": "CYBERMASTERY_MODULARIZATION_ALIGNMENT_REVIEW.md",
+    "sha256": "21176e324e85fefd5d8695f00abdcb9ec81341fe1badad80ea66737ade82e420"
+  },
+  {
+    "name": "CYBERMASTERY_OPENCODE_MEDIATION_PLAN.md",
+    "sha256": "094a9be3117b3353f64ce74af942488c72b497351a73180f9d7a0a4ee3b74880"
+  }
+]

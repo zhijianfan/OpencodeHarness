@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "capturedAt": "2026-09-23T03:39:38.384Z",
+  "harnessHead": "4a59cbde7e67f2fdd7c7523cf6a5274d9594a076",
+  "harnessTree": "8b338241ca924bff6c767e903e272d182f0d2f9a",
+  "referenceHead": "d555e5aa7031ca210b7ba4ab098e746c3ee79404",
+  "referenceTree": "8ddff0380260a2847f7f240dc274c72f436a2e4e",
+  "comparison": {
+    "repository": "https://github.com/anomalyco/opencode.git",
+    "commit": "b02acc1e30ef55f7f181fec8d2f241d26f022683",
+    "path": "vendor/opencode",
+    "selection": "Exact official comparison commit reviewed before extraction; not tracking dev."
+  },
+  "deltaPaths": 1128,
+  "forkOnlyCommits": 147,
+  "environment": {
+    "platform": "win32",
+    "arch": "x64",
+    "bun": "1.3.14"
+  },
+  "referenceStatus": "?? .opencode-tmp/\n",
+  "relevantUntrackedAtStart": [
+    "CYBERMASTERY_MODULARIZATION_ALIGNMENT_REVIEW.md",
+    "CYBERMASTERY_OPENCODE_MEDIATION_PLAN.md"
+  ],
+  "excludedUntracked": [
+    {
+      "path": ".opencode-tmp/",
+      "reason": "Agent scratch state, not product source; retained in the original checkout"
+    }
+  ],
+  "stabilizationFiles": {
+    "state": "committed",
+    "commit": "d555e5aa7031ca210b7ba4ab098e746c3ee79404",
+    "priorBaseline": "b7c82166e3ed1c7c7cb64a1ac631f2a9e15404e0"
+  },
+  "completeness": "pending-per-path-review"
+}

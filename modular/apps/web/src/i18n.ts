@@ -1,0 +1,55 @@
+const english = {
+  "app.title": "CyberMastery Web Proof Shell",
+  "app.proofLabel": "Proof",
+  "app.proofNotice": "Static-card host proof. Not complete CyberMastery parity.",
+  "auth.title": "Session",
+  "auth.tokenLabel": "Auth token",
+  "auth.tokenHint": "The token stays in memory. It is never written to local storage or the URL.",
+  "auth.connect": "Connect",
+  "auth.connecting": "Connecting…",
+  "auth.disconnect": "Disconnect",
+  "status.disconnected": "Disconnected",
+  "status.connecting": "Connecting…",
+  "status.connected": "Connected",
+  "status.loading": "Loading layout…",
+  "status.saving": "Saving layout…",
+  "palette.title": "Palette",
+  "palette.empty": "No block definitions are registered.",
+  "palette.mode": "Mode",
+  "palette.contract": "Contract",
+  "palette.minSize": "Min size",
+  "mode.native": "Native",
+  "mode.projected": "Projected",
+  "mode.local": "Local",
+  "mode.static": "Static",
+  "canvas.title": "Static card grid",
+  "canvas.limitation": "Limitation: this proof renders a fixed card grid. It does not implement the full infinite canvas, panning, zooming, or resizing.",
+  "canvas.positions": "Block transform values are stored as layout metadata only; the proof grid does not apply them as absolute positions.",
+  "canvas.empty": "The workspace layout has no blocks yet.",
+  "canvas.layoutID": "Layout",
+  "canvas.revision": "Revision",
+  "action.addCard": "Add card",
+  "action.save": "Save",
+  "action.reload": "Reload",
+  "card.remove": "Remove",
+  "card.id": "Block ID",
+  "card.functionality": "Functionality",
+  "card.transform": "Transform",
+  "unsupported": "Unsupported functionality",
+  "unsupported.hint": "This block is declared in the workspace layout, but no renderer is registered for its functionality.",
+  "notice.stale": "The workspace layout changed on the server while you have unsaved edits. Your edits are kept. Reload to take over the latest revision.",
+  "notice.conflict": "The save did not match the server revision. Your edits are kept. Reload to take over the latest revision.",
+  "error.action": "The action failed. Check the connection and try again.",
+  "block.staticCard.label": "Static card",
+  "block.staticCard.title": "Proof static card",
+  "block.staticCard.body": "This card is rendered by the registered proof:static-card block definition.",
+  "boot.missingRoot": "Missing #root element for the CyberMastery web proof shell.",
+} as const
+
+const translations = new Map<string, string>(Object.entries(english))
+
+export type TranslationKey = keyof typeof english
+
+export function t(key: string): string {
+  return translations.get(key) ?? key
+}

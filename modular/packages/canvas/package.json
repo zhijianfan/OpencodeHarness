@@ -1,0 +1,8 @@
+{
+  "name": "@cybermastery/canvas",
+  "private": true,
+  "type": "module",
+  "exports": {"./registry": "./src/registry.ts", "./event-router": "./src/event-router.ts"},
+  "dependencies": {"@cybermastery/contracts": "workspace:*"},
+  "scripts": {"typecheck": "tsgo --noEmit", "test": "bun test src"}
+}

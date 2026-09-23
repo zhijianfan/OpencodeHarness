@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "release": "blocked",
+  "legacyRemovalAllowed": false,
+  "gates": {
+    "G0": {"status": "partial", "reason": "Baseline captured; 1128 path dispositions require source-level review rather than automatic path classification."},
+    "G1A": {"status": "proof-slice-implemented", "reason": "Independent Solid shell, descriptor registry, extension client, authenticated host, scoped SSE, native database graph and layout CAS have executable coverage. This is not the complete native host surface."},
+    "G1B": {"status": "partial", "reason": "Facade admission, managed replay isolation, checkpoint codec, private request reconstruction and native-compactor adaptation have executable coverage. Stock runner/all-admission wiring and original fork transfer/migration compatibility remain unproven. Full parity stays blocked."},
+    "G2": {"status": "not-started-broad-extraction"},
+    "G3": {"status": "not-started"},
+    "G4": {"status": "not-started-full-migration-and-host-matrix"},
+    "G5": {"status": "not-started-upgrade-drill"}
+  },
+  "removalRule": "Retain integrated packages until all parity, migration and host gates pass. A proof shell or clean submodule is not permission to delete current functionality."
+}
