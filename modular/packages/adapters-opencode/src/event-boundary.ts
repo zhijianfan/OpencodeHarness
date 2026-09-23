@@ -12,6 +12,7 @@ type Batch = {
   active: boolean
 }
 class CurrentBatch extends Context.Service<CurrentBatch, Batch>()("@cybermastery/EventBatch") {}
+export class EventReplayScope extends Context.Service<EventReplayScope, { readonly aggregateID: string } | undefined>()("@cybermastery/EventReplayScope") {}
 
 export class EventBoundaryViolation extends Error {
   constructor(message: string) {
@@ -128,9 +129,9 @@ export function makeEventBoundaryNode(options: {
         return Stream.fromSubscription(subscription)
       }))
       const events: EventV2.Interface = {
-        publish: (definition, data, options) => mutate(native.publish(definition, data, options)),
-        replay: (event, options) => mutate(native.replay(event, options)),
-        replayAll: (events, options) => mutate(native.replayAll(events, options)),
+        publish: (definition, data, options) => mutate(native.publish(definition, data, options).pipe(Effect.provideService(EventReplayScope, undefined))),
+        replay: (event, options) => mutate(native.replay(event, options).pipe(Effect.provideService(EventReplayScope, { aggregateID: event.aggregateID }))),
+        replayAll: (events, options) => mutate(native.replayAll(events, options).pipe(Effect.provideService(EventReplayScope, { aggregateID: events[0]?.aggregateID ?? "" }))),
         remove: (aggregateID) => mutate(native.remove(aggregateID)),
         claim: (aggregateID, ownerID) => mutate(native.claim(aggregateID, ownerID)),
         project: native.project,

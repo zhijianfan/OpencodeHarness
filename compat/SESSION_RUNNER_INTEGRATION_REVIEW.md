@@ -2,6 +2,12 @@
 
 Date: 2026-09-23. Official pin: `b02acc1e30ef55f7f181fec8d2f241d26f022683`.
 
+## Implementation update after checkpoint 48b592f
+
+The owned replacement described below is now implemented in `runner.ts` and assembled by `session-runtime.ts`. Native `SessionV2.prompt`/`resume` flow through the private Session facade, native Location map and native execution coordinator. An executable integration test checks that root and Location runner use the identical Database, Event and SessionStore instances. Clean-mode comparison, private context, tools/step limits, queue/steer boundaries, compaction, overflow recovery and interruption have focused tests.
+
+This resolves the earlier absence of actual runner wiring for the core integration kernel. The broader legacy/HTTP/child/permission/provider matrix and fork transfer/data compatibility remain incomplete. See `OWNED_RUNNER_DECISION.md` and the replacement inventory; the historical boundary analysis below explains why the replacement was necessary.
+
 ## What is now executable
 
 - `event-boundary.ts` supplies an explicit Event-service replacement that delegates native persistence/projectors and controls transaction visibility.

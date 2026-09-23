@@ -1,5 +1,5 @@
 {
-  "capturedAt": "2026-09-23T06:41:54.750Z",
+  "capturedAt": "2026-09-23T08:51:42.692Z",
   "scope": "modular proof workspace only; not full feature parity",
   "release": "blocked-see-gates.json",
   "success": true,
@@ -43,8 +43,8 @@
       "pass": 25,
       "fail": 0,
       "skip": 0,
-      "outputHash": "c08f21d7cc4336fcca70beec2090b2f800975f974803fa56b7907adb2f8ba3f2",
-      "output": "bun test v1.3.14 (0d9b296a)\n\n 25 pass\n 0 fail\n 93 expect() calls\nRan 25 tests across 1 file. [34.00ms]\n"
+      "outputHash": "deb2c29691e60e3b2305f12a89d38f3055958caaf01fe2f2bc9d104632939ca4",
+      "output": "bun test v1.3.14 (0d9b296a)\n\n 25 pass\n 0 fail\n 93 expect() calls\nRan 25 tests across 1 file. [38.00ms]\n"
     },
     {
       "cwd": "packages/canvas",
@@ -70,8 +70,8 @@
       "pass": 18,
       "fail": 0,
       "skip": 0,
-      "outputHash": "8b1a6cf3c0d32ca333cd2bac7f35995fd6822b9f303c6ec874f60ed9441469e3",
-      "output": "bun test v1.3.14 (0d9b296a)\n\n 18 pass\n 0 fail\n 66 expect() calls\nRan 18 tests across 2 files. [42.00ms]\n"
+      "outputHash": "1f1a09bc6d6f07ccc6d2e59a6847336e15ec28c39f13026dab06b761fbefdfc6",
+      "output": "bun test v1.3.14 (0d9b296a)\n\n 18 pass\n 0 fail\n 66 expect() calls\nRan 18 tests across 2 files. [38.00ms]\n"
     },
     {
       "cwd": "packages/compat",
@@ -97,8 +97,8 @@
       "pass": 8,
       "fail": 0,
       "skip": 1,
-      "outputHash": "96f047f42d776403abe23189d1935f097a7caf22697fa49b60273d4af88d4362",
-      "output": "bun test v1.3.14 (0d9b296a)\n\n 8 pass\n 1 skip\n 0 fail\n 8 expect() calls\nRan 9 tests across 1 file. [2.61s]\n"
+      "outputHash": "830871abf4c50e5f514e3748b26aac4c4a14f914bbddef0c5461088b8b78569a",
+      "output": "bun test v1.3.14 (0d9b296a)\n\n 8 pass\n 1 skip\n 0 fail\n 8 expect() calls\nRan 9 tests across 1 file. [2.65s]\n"
     },
     {
       "cwd": "packages/domain",
@@ -137,8 +137,8 @@
       "pass": 13,
       "fail": 0,
       "skip": 0,
-      "outputHash": "077753a6d15b94c16198a2a8b414fa3e570b42185c45893a44a797ba23a9a493",
-      "output": "bun test v1.3.14 (0d9b296a)\n\n 13 pass\n 0 fail\n 43 expect() calls\nRan 13 tests across 1 file. [40.00ms]\n"
+      "outputHash": "7abdfed0cdcf7ee0b86c49c3e4c000e0d5512a13f017bf0173ec18c7b1cff9e1",
+      "output": "bun test v1.3.14 (0d9b296a)\n\n 13 pass\n 0 fail\n 43 expect() calls\nRan 13 tests across 1 file. [43.00ms]\n"
     },
     {
       "cwd": "packages/adapters-opencode",
@@ -161,11 +161,11 @@
         "test"
       ],
       "exitCode": 0,
-      "pass": 78,
+      "pass": 93,
       "fail": 0,
       "skip": 0,
-      "outputHash": "4a5dec6dbccbfd5445f1fcf576d5f7af951df181c122146e36a0ed11d100a43e",
-      "output": "bun test v1.3.14 (0d9b296a)\n\n 78 pass\n 0 fail\n 228 expect() calls\nRan 78 tests across 7 files. [3.26s]\n"
+      "outputHash": "2af1147e253a47290d319aad77c7ce2d6d5088f58edb1b64ab7edb7f559bf27c",
+      "output": "bun test v1.3.14 (0d9b296a)\n[08:51:28.236] INFO (#5481): watcher backend {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-runtime-aSnDJO\",\n  platform: \"win32\",\n  backend: \"windows\",\n}\n[08:51:28.245] INFO (#5595): project copy refresh started {\n  projectID: \"global\",\n}\n[08:51:28.246] INFO (#5595): project copy refresh done {\n  projectID: \"global\",\n  updated: [],\n  removed: [],\n}\n[08:51:28.636] INFO (#5481): booting location services {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-runtime-aSnDJO\",\n  workspaceID: \"wrk_integrated\",\n}\n\ntest\\session-runtime.test.ts:\n\n 93 pass\n 0 fail\n 298 expect() calls\nRan 93 tests across 10 files. [6.23s]\n"
     },
     {
       "cwd": "apps/host",
@@ -191,8 +191,8 @@
       "pass": 2,
       "fail": 0,
       "skip": 0,
-      "outputHash": "1688061d9fd45aa468d606200c563b13c2876a45fef722aa2f0a126a3f4ce3bb",
-      "output": "bun test v1.3.14 (0d9b296a)\n\n 2 pass\n 0 fail\n 10 expect() calls\nRan 2 tests across 1 file. [1035.00ms]\n"
+      "outputHash": "2a64f78578552f59267d2ad06e67a2aa44d2c964617c7f6e5d536108413088b3",
+      "output": "bun test v1.3.14 (0d9b296a)\n\n 2 pass\n 0 fail\n 10 expect() calls\nRan 2 tests across 1 file. [1074.00ms]\n"
     },
     {
       "cwd": "apps/web",
@@ -218,8 +218,8 @@
       "pass": 0,
       "fail": 0,
       "skip": 0,
-      "outputHash": "1afb41f332d1c8a250f48a9e88e03ee716711eaf05a240f2a70f809b110bd262",
-      "output": "vite v7.1.4 building for production...\ntransforming...\n✓ 12 modules transformed.\nrendering chunks...\ncomputing gzip size...\ndist/index.html                  0.38 kB │ gzip:  0.27 kB\ndist/assets/index-nnPvlgzt.css   3.41 kB │ gzip:  1.11 kB\ndist/assets/index-BVMgu9h7.js   33.66 kB │ gzip: 11.79 kB\n✓ built in 386ms\n$ vite build --configLoader runner\n"
+      "outputHash": "95274f88c82381ad43884ddd3047da9fe35883c3ca74a0c76d20651bd7f25e68",
+      "output": "vite v7.1.4 building for production...\ntransforming...\n✓ 12 modules transformed.\nrendering chunks...\ncomputing gzip size...\ndist/index.html                  0.38 kB │ gzip:  0.27 kB\ndist/assets/index-nnPvlgzt.css   3.41 kB │ gzip:  1.11 kB\ndist/assets/index-BVMgu9h7.js   33.66 kB │ gzip: 11.79 kB\n✓ built in 418ms\n$ vite build --configLoader runner\n"
     },
     {
       "cwd": "apps/web",
@@ -232,8 +232,8 @@
       "pass": 1,
       "fail": 0,
       "skip": 0,
-      "outputHash": "c5679eb657969f75b1a759a84ee59f1a091e2634f8d5666ce875258cb13e85df",
-      "output": "bun test v1.3.14 (0d9b296a)\n$ bun test test --timeout 30000\n\n 1 pass\n 0 fail\n 1 expect() calls\nRan 1 test across 1 file. [3.04s]\n"
+      "outputHash": "2063ad53ceef1d7afad4ca9eee00cfd571380be88a380d56458a823aeec0e827",
+      "output": "bun test v1.3.14 (0d9b296a)\n$ bun test test --timeout 30000\n\n 1 pass\n 0 fail\n 1 expect() calls\nRan 1 test across 1 file. [3.09s]\n"
     }
   ]
 }

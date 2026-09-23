@@ -10,6 +10,7 @@ import { Effect, Option, Schema } from "effect"
 import { sql } from "drizzle-orm"
 import { EventBoundary } from "./event-boundary"
 import { decodeCheckpoint, SENTINEL } from "./checkpoint"
+import { PrivateRestoreContext } from "./restore-context"
 
 const InputRecord = Schema.Struct({
   messageID: SessionMessage.ID,
@@ -142,7 +143,7 @@ export function makePrivateProjection(policy: {
       if (latest > bundle.body.sourceSeq) return yield* new ProjectionError({ code: "receiver-ahead" })
       yield* events.replayAll(bundle.body.events.map((event) => ({ ...event, data: { ...event.data } })), {
         publish: input.publish, ownerID: input.scope.ownerID, strictOwner: true,
-      })
+      }).pipe(Effect.provideService(PrivateRestoreContext, { sessionID: input.scope.sessionID, digest: bundle.digest }))
       for (const row of bundle.body.inputs) {
         const visible = yield* database.db.get<{ admitted_seq: number }>(sql`SELECT admitted_seq FROM session_input
           WHERE id = ${row.messageID} AND session_id = ${input.scope.sessionID}`)

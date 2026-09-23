@@ -74,7 +74,9 @@ They also characterize two failing full-parity strategies:
 
 `projection.ts` atomically restores input sidecars, checkpoints and the native epoch in the new explicit proof format. It checks an independently supplied expected digest, authorization, placement, relations and immutable duplicates. Native revert deletion cleans up extension records. This is not the original fork's paged BundleV1 protocol: lossy native codec decoding is rejected and migration compatibility remains pending.
 
-`provider-context.ts` reconstructs immutable private request messages, and `compaction.ts` exercises the real native compactor with enriched history while atomically storing a clean public checkpoint plus private summary/recent text. These adapters pass directly invoked tests; the stock runner still constructs its history/compaction internally and has not been wired to them. See `../compat/SESSION_RUNNER_INTEGRATION_REVIEW.md`.
+`provider-context.ts` reconstructs immutable private request messages, and `compaction.ts` exercises the real native compactor with enriched history while atomically storing a clean public checkpoint plus private summary/recent text. `runner.ts` now supplies explicit owned orchestration at the Location-scoped SessionRunner boundary. `session-facade.ts` delegates the native Session constructor and normalization while adding private admission/guard behavior. `createSessionRuntime` wires both into the native Location map and execution coordinator, with object-identity checks for shared services.
+
+The core integration kernel is exported as `@cybermastery/adapters-opencode/session-runtime`; managed callers provide `PrivatePromptContext` from `./session-context`. The static-card HTTP host is still a proof host, not an assertion that every native/legacy endpoint has been migrated. See `../compat/OWNED_RUNNER_DECISION.md` for the replacement responsibility and outstanding conformance matrix.
 
 Current-fork data migration and all supported CLI/desktop/embedded/TUI workflows remain pending. **Do not remove the integrated source based on this proof.**
 

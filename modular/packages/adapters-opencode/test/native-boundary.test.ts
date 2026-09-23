@@ -213,6 +213,6 @@ describe("official native boundary", () => {
   test("refuses full-parity startup while mandatory native integration remains unproven", () => {
     expect(requireFullParity).toThrow(FullParityUnavailable)
     expect(new FullParityUnavailable().missing).toContain("atomicPrivateReplay")
-    expect(new FullParityUnavailable().missing).toContain("privateProviderReconstruction")
+    expect(new FullParityUnavailable().missing).toContain("allAdmissionEntrypoints")
   })
 })

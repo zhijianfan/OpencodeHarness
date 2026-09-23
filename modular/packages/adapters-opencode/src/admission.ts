@@ -37,6 +37,14 @@ type Stored = {
 
 const digest = (value: string) => createHash("sha256").update(value).digest("hex")
 
+export const privateRequestIdentity = (request: AdmissionRequest) => digest(JSON.stringify({
+  sessionID: request.sessionID,
+  actor: { userID: request.actor.userID, workspaceID: request.actor.workspaceID },
+  text: request.text,
+  delivery: request.delivery,
+  references: request.references.map((reference) => ({ id: reference.id, contentHash: reference.contentHash })),
+}))
+
 /**
  * Explicit external admission facade around the native helper. This does not
  * intercept stock SessionV2.prompt or provide native provider reconstruction;
@@ -53,13 +61,7 @@ export const admit = Effect.fn("CyberMastery.admit")(function* (
   const schedule = () => Option.isSome(boundary) ? boundary.value.afterCommit(wake(request.sessionID)) : wake(request.sessionID)
   if (!request.actor.userID || !request.actor.workspaceID) return yield* new AdmissionError({ code: "unauthorized" })
   yield* policy.authorize(request)
-  const requestHash = digest(JSON.stringify({
-    sessionID: request.sessionID,
-    actor: { userID: request.actor.userID, workspaceID: request.actor.workspaceID },
-    text: request.text,
-    delivery: request.delivery,
-    references: request.references.map((reference) => ({ id: reference.id, contentHash: reference.contentHash })),
-  }))
+  const requestHash = privateRequestIdentity(request)
   const stored = () => database.db.get<Stored>(sql`SELECT request_hash, api_content, api_content_hash, renderer_version
     FROM cm_private_input WHERE message_id = ${request.messageID} AND session_id = ${request.sessionID}`)
   const validate = (row: Stored | undefined) => {

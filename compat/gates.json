@@ -5,7 +5,7 @@
   "gates": {
     "G0": {"status": "partial", "reason": "Baseline captured; 1128 path dispositions require source-level review rather than automatic path classification."},
     "G1A": {"status": "proof-slice-implemented", "reason": "Independent Solid shell, descriptor registry, extension client, authenticated host, scoped SSE, native database graph and layout CAS have executable coverage. This is not the complete native host surface."},
-    "G1B": {"status": "partial", "reason": "Facade admission, managed replay isolation, checkpoint codec, private request reconstruction and native-compactor adaptation have executable coverage. Stock runner/all-admission wiring and original fork transfer/migration compatibility remain unproven. Full parity stays blocked."},
+    "G1B": {"status": "partial", "reason": "Native Session facade, owned Location runner, native coordinator/Location-map integration, private request/compaction and managed replay have executable coverage with shared service identities. Legacy/HTTP entrypoint coverage, child ownership and original fork transfer/migration compatibility remain incomplete. Full parity stays blocked."},
     "G2": {"status": "not-started-broad-extraction"},
     "G3": {"status": "not-started"},
     "G4": {"status": "not-started-full-migration-and-host-matrix"},

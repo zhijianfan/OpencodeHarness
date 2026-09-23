@@ -4,9 +4,9 @@ Date: 2026-09-23
 
 ## Overall state
 
-**Partially implemented. Official upstream and the independent modular proof slice work. Managed replay isolation and private reconstruction/compaction adapters now pass; full runner/entrypoint wiring and fork-transfer compatibility still block removal of the integrated runtime.**
+**Partially implemented. Official upstream, the modular proof host and the private-aware core Session runtime work. Full legacy/HTTP/child/provider parity and fork-transfer/data compatibility still block removal of the integrated runtime.**
 
-Work is local in `D:\OpencodeHarness`. No implementation commit or push has been made. `D:\CyberMastery` remains unchanged.
+Checkpoint `48b592f` was pushed to `OpencodeHarness/main`; its pre-push hook passed 31 typecheck tasks. The subsequent Session/runner integration is documented below; Git history records its publication state. `D:\CyberMastery` remains unchanged.
 
 ## Completed work
 
@@ -22,6 +22,9 @@ Work is local in `D:\OpencodeHarness`. No implementation commit or push has been
 10. Added explicit Event-service mediation using upstream `layerWith(beforeAggregateRead)`: buffered public notifications, durable-reader fencing, nested rollback, post-commit wakes and owning-fiber/kernel checks. Native storage, sequencing and projectors remain delegated to upstream. The external proof host now uses this graph.
 11. Added an atomic private-projection proof transport covering immutable input records, checkpoint records, requirements, native epoch state, authorization/digest/placement checks and native revert cascade cleanup. Duplicate/conflicting/lossy imports fail closed.
 12. Preserved the private checkpoint v1 format and added verified private-history/request projection. The compaction adapter invokes the real native compactor on enriched history, commits private summary/recent data atomically, and keeps the public checkpoint at the existing sentinel plus clean recent text.
+13. Added a native Session service facade that preserves native prompt/MIME normalization and non-prompt methods, freezes private context before admission, enforces prepared scope for managed admissions, reconciles exact retries, and defers wake until the owning transaction commits. Verified private replay receives a scoped permit.
+14. Added explicit owned Location-scoped runner orchestration composing native history, epochs, agent/model selection, event publisher, tools and snapshots with private request/compaction adapters. Native SessionExecution coordination remains authoritative.
+15. Assembled `createSessionRuntime` and tested native Session prompt/resume through the actual native Location map and coordinator. Root and Location runner share identical Database, Event and SessionStore objects. An explicit canonical SessionStore replacement handles the pinned hoister's rewritten/original node identities without a vendor patch.
 
 The proof shell deliberately has only a static card grid. It does not claim that OperatingChat, MasterAgent, CtxPack, ChatRelay, skills, Scratchpad, all native screens or existing data have been fully extracted.
 
@@ -34,13 +37,13 @@ Machine-readable output: `compat/verification.json`.
 | Check | Result |
 | --- | --- |
 | Typechecks for eight modular packages/apps | Pass |
-| Modular contract, Canvas, client, compatibility, native-boundary, storage and HTTP tests | 144 pass, 1 skip, 0 fail |
+| Modular contract, Canvas, client, compatibility, native-boundary, storage and HTTP tests | 159 pass, 1 skip, 0 fail |
 | Real-browser static-card smoke | 1 pass; independent LTR and RTL contexts, save/sync/remove |
 | Independent Solid production build | Pass |
 | Integrated app typecheck and corrected MasterAgent registration suite | Previously verified pass; 4 tests, unchanged in this continuation |
 | Official upstream before/after attestation | Same pin, tree and source digest |
 
-The latest proof verification records **145 passing tests**, with **one POSIX-only symlink case skipped on Windows**. The separately recorded integrated-app regression adds four earlier passes, not part of the latest proof command. The browser smoke drives installed Edge through a Node subprocess while the proof application remains on Bun. No toolchain upgrade was made. SQLite runtimes are disposed immediately; per-file suite cleanup unlinks temporary databases after test frames release Windows native statements, and cleanup failures remain test failures.
+The latest proof verification records **160 passing tests**, with **one POSIX-only symlink case skipped on Windows**. The separately recorded integrated-app regression adds four earlier passes, not part of the latest proof command. The browser smoke drives installed Edge through a Node subprocess while the proof application remains on Bun. No toolchain upgrade was made. SQLite runtimes are disposed immediately; per-file suite cleanup unlinks temporary databases after test frames release Windows native statements, and cleanup failures remain test failures.
 
 This is not the full repository suite, a Linux run, live ChatGPT-site verification, complete migration coverage, all native host surfaces or an upstream-pin upgrade drill.
 
@@ -53,15 +56,15 @@ The original native-boundary suite preserves two counterexamples relevant to G1B
 
 The new mediated graph fixes these timing failures for managed operations. It does not claim the stock implementation acquired a new `replayBatch` method or that arbitrary unmanaged outer transactions became safe.
 
-The remaining blocker is integration coverage: the admission facade does not intercept all stock/legacy prompt entrypoints, and the stock runner constructs history and compaction through direct helper imports. The new adapters are verified when invoked explicitly but are not automatically wired into those internal calls. The new full-snapshot proof transport is also not the fork's existing paged BundleV1 protocol; fork-only fields rejected by native codecs remain a migration/decoder integration issue.
+The previous core wiring gap is now addressed by explicit Session and runner replacements, including a real native prompt/resume integration test. Remaining coverage includes legacy/HTTP transports, child execution ownership and the broader permission/provider/failure matrix. The new full-snapshot proof transport is also not the fork's existing paged BundleV1 protocol; fork-only fields rejected by native codecs remain a migration/decoder integration issue.
 
 Consequently, full-parity startup throws `FullParityUnavailable`. `compat/gates.json` records `legacyRemovalAllowed: false`. Deleting the integrated runtime now would remove behavior before a replacement is proven, contrary to the approved parity and migration constraints.
 
 ## Next required implementation work
 
 1. Finish the baseline's per-path feature/disposition review, route/event/default inventory and schema migration inventory.
-2. Complete the explicit Session/provider/compaction integration decision against the existing Location-scoped `SessionRunner.Service` boundary. The Event replacement is now implemented and recorded. Measure any additional replacement responsibility; do not copy or shadow native modules.
-3. Pass G1B across every supported admission entrypoint, native provider turns, compaction and transactional public/private restore with post-commit notification isolation.
+2. Expand conformance coverage of the implemented Session/runner replacements, especially permission decline, provider failures, child ownership and all supported transports. The replacement responsibility is explicit; no native imports or source are shadowed.
+3. Complete G1B across every supported admission entrypoint and the existing fork transfer/schema contracts, beyond the passing core runtime and proof-format restoration paths.
 4. Extract the remaining features with the corrected preservation inventory, including existing task_batch manifest/result capture, model pinning, retry and archival.
 5. Complete current-fork data migration/rollback and the combined-host/CLI/desktop/embedded/TUI parity matrix, then perform an official-pin upgrade drill.
 6. Remove the old integrated source only after those gates pass; move the validated isolated workspace into the final production topology at that point.

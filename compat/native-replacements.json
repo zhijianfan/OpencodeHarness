@@ -26,8 +26,8 @@
       "nativeBoundary": "Native toLLMMessages, LLM.updateRequest and SessionCompaction.make",
       "owner": "modular/packages/adapters-opencode/src/provider-context.ts; compaction.ts; context-store.ts; history.ts; checkpoint.ts",
       "behavior": "Reconstruct verified private request content and delegate native compaction with enriched history; publish only the sentinel and clean recent projection while committing private checkpoint atomically.",
-      "limitations": ["Adapters are tested directly but are not called by the stock runner's internal free-function composition", "Existing private checkpoint v1 format retained; full fork data migration remains pending"],
-      "evidence": "provider-context.test.ts; history.test.ts; checkpoint.test.ts"
+      "limitations": ["Used by the explicitly owned runner rather than modifying the stock runner's internal imports", "Existing private checkpoint v1 format retained; full fork data migration remains pending"],
+      "evidence": "provider-context.test.ts; history.test.ts; checkpoint.test.ts; runner.test.ts; session-runtime.test.ts"
     },
     {
       "id": "managed-event-transactions",
@@ -50,11 +50,25 @@
       "evidence": "projection.test.ts"
     },
     {
-      "id": "stock-runner-private-context-wiring",
-      "classification": "blocked",
+      "id": "owned-location-runner",
+      "classification": "replace",
       "nativeBoundary": "SessionRunner.Service / SessionRunnerLLM.node",
-      "reason": "Stock runner loads history and constructs compaction through direct helper imports before the LLM boundary. A larger explicitly owned runner integration decision remains necessary.",
-      "review": "compat/SESSION_RUNNER_INTEGRATION_REVIEW.md"
+      "owner": "modular/packages/adapters-opencode/src/runner.ts",
+      "replaced": ["provider-attempt and durable-continuation orchestration", "private-aware request and compaction integration"],
+      "delegated": ["inbox promotion", "history selection", "Context Epoch", "agent/model selection", "LLM event publisher", "tool registry/settlement", "output bounding", "snapshots", "native SessionExecution coordinator"],
+      "limitations": ["Broader permission/provider/child/legacy conformance matrix remains incomplete", "This is an explicitly maintained native-runtime replacement"],
+      "review": "compat/OWNED_RUNNER_DECISION.md",
+      "evidence": "runner.test.ts; session-runtime.test.ts"
+    },
+    {
+      "id": "native-session-prompt-decoration",
+      "classification": "replace",
+      "nativeBoundary": "SessionV2.node exported implementation and EventV2.project(PromptAdmitted)",
+      "owner": "modular/packages/adapters-opencode/src/session-facade.ts",
+      "delegated": ["native Session constructor", "MIME normalization", "native prompt reconciliation", "all non-prompt methods"],
+      "replaced": ["managed prompt preparation and private identity validation", "atomic private admission projector guard", "post-commit wake scheduling"],
+      "limitations": ["Managed callers must provide PrivatePromptContext", "Verified restore uses a scoped internal permit", "All HTTP/legacy callers are not yet wired"],
+      "evidence": "session-facade.test.ts; session-runtime.test.ts"
     }
   ],
   "copiedNativeProductionImplementations": [],

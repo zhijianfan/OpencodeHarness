@@ -4,7 +4,9 @@
   "type": "module",
   "exports": {
     "./layout": "./src/layout.ts",
-    "./capabilities": "./src/capabilities.ts"
+    "./capabilities": "./src/capabilities.ts",
+    "./session-runtime": "./src/session-runtime.ts",
+    "./session-context": "./src/session-facade.ts"
   },
   "dependencies": {
     "@cybermastery/contracts": "workspace:*",
