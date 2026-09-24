@@ -2,8 +2,11 @@ import { Buffer } from "node:buffer"
 import { mkdir, mkdtemp } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
 import type { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { Database } from "@opencode-ai/core/database/database"
 import { Global } from "@opencode-ai/core/global"
 import type { Location } from "@opencode-ai/core/location"
+import { ProjectV2 } from "@opencode-ai/core/project"
+import { ProjectTable } from "@opencode-ai/core/project/sql"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { WorkspaceV2 } from "@opencode-ai/core/workspace"
 import { sql } from "drizzle-orm"
@@ -15,6 +18,12 @@ import type { RunnerIdentity } from "./runner"
 import { SessionAccessError, type SessionActor } from "./session-access"
 import type { SessionPolicy } from "./session-facade"
 import { createSessionHttp } from "./session-http"
+import { createTransferHttp } from "./transfer-http"
+import { TransferError } from "./transfer-protocol"
+import { makeTransferReadiness } from "./transfer-readiness"
+import { makeTransferReceiver } from "./transfer-receiver"
+import { makeTransferSource, type TransferSource } from "./transfer-source"
+import { SessionContextTransferSpool } from "./transfer-spool"
 
 /** One owned native graph; both the Session ingress and layout storage borrow it. */
 export async function createApplicationAdapter(input: {
@@ -75,20 +84,38 @@ export async function createApplicationAdapter(input: {
   const replacements = input.isolated
     ? await isolatedReplacements(input.filename, input.replacements ?? [])
     : input.replacements
+  const readiness = Effect.runSync(makeTransferReadiness())
   const native = await createNativeHttp({
     filename: input.filename,
     password: token,
     policy,
+    readiness,
+    replayOwner: actor.workspaceID,
     replacements,
     onRunnerConstruct: input.onRunnerConstruct,
   })
-  const owned: { ingress?: Awaited<ReturnType<typeof createSessionHttp>>; disposal?: Promise<void> } = {}
+  const owned: {
+    ingress?: Awaited<ReturnType<typeof createSessionHttp>>
+    source?: TransferSource
+    receiver?: Effect.Success<ReturnType<typeof makeTransferReceiver>>
+    spool?: SessionContextTransferSpool
+    disposal?: Promise<void>
+  } = {}
   const dispose = () => {
     owned.disposal ??= Promise.resolve().then(async () => {
       try {
         await owned.ingress?.dispose()
       } finally {
-        await native.dispose()
+        try {
+          if (owned.source) await native.runtime.runPromise(owned.source.dispose)
+          if (owned.receiver) await native.runtime.runPromise(owned.receiver.dispose)
+        } finally {
+          try {
+            await owned.spool?.dispose()
+          } finally {
+            await native.dispose()
+          }
+        }
       }
     })
     return owned.disposal
@@ -96,6 +123,38 @@ export async function createApplicationAdapter(input: {
 
   try {
     const storage = await bindLayoutRepository({ runtime: native.runtime, workspaceID: actor.workspaceID, ownerID: actor.userID })
+    const database = await native.runtime.runPromise(Database.Service)
+    const project = await native.runtime.runPromise(Effect.gen(function* () {
+      const projects = yield* ProjectV2.Service
+      const project = yield* projects.resolve(location.directory)
+      yield* database.db.insert(ProjectTable).values({
+        id: project.id, worktree: project.directory, vcs: project.vcs?.type, sandboxes: [],
+      }).onConflictDoNothing().run()
+      return project
+    }))
+    const authorizeTransfer = () => database.db.get<{ owner_id: string }>(sql`
+      SELECT owner_id FROM cm_workspace WHERE id = ${actor.workspaceID}`).pipe(
+      Effect.mapError(() => new TransferError({ code: "forbidden", message: "workspace unavailable" })),
+      Effect.flatMap((workspace) => workspace?.owner_id === actor.userID
+        ? Effect.void : Effect.fail(new TransferError({ code: "forbidden", message: "workspace authority changed" }))),
+    )
+    const transferPolicy = {
+      scope: { principalID: actor.userID, ownerID: actor.workspaceID, projectID: project.id,
+        workspaceID: location.workspaceID, directory: location.directory },
+      authorize: authorizeTransfer,
+    }
+    const source = await native.runtime.runPromise(makeTransferSource(transferPolicy))
+    owned.source = source
+    const spool = await SessionContextTransferSpool.make({ root: resolve(input.filename) + ".transfer-spool" })
+    owned.spool = spool
+    const receiver = await native.runtime.runPromise(makeTransferReceiver({ ...transferPolicy, spool }))
+    owned.receiver = receiver
+    const transfer = createTransferHttp({
+      source, receiver, readiness, workspaceID: location.workspaceID,
+      authenticate: async (request) => authenticate(request) !== undefined,
+      authorizeStart: authorizeTransfer,
+      run: (effect) => native.runtime.runPromise(effect),
+    })
     const ingress = await createSessionHttp({
       runtime: native.runtime,
       defaultLocation: location,
@@ -113,6 +172,8 @@ export async function createApplicationAdapter(input: {
       runtime: native.runtime,
       async fetch(request: Request): Promise<Response> {
         if (owned.disposal) throw new Error("Application adapter has been disposed")
+        const privateResponse = await transfer.fetch(request)
+        if (privateResponse !== undefined) return privateResponse
         const response = await ingress.fetch(request)
         if (response !== undefined) return response
         // Even native OpenAPI must pass application authentication. Never expose

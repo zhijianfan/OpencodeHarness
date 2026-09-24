@@ -3,6 +3,7 @@ import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionSchema } from "@opencode-ai/core/session/schema"
 import { Effect, Schema, Stream } from "effect"
 import { PrivatePromptContext } from "./session-facade"
+import type { RequestProof } from "./transfer-readiness"
 
 export type SessionActor = { readonly userID: string; readonly workspaceID: string }
 export type ContextAttachment = {
@@ -98,12 +99,13 @@ export const makeSessionAccess = Effect.fn("SessionAccess.make")(function* (poli
     }),
     prompt: (actor: SessionActor, input: Parameters<SessionV2.Interface["prompt"]>[0] & {
       readonly contextAttachments?: readonly ContextAttachment[]
+      readonly contextTransferProof?: RequestProof
     }) => Effect.gen(function* () {
       yield* requireActor(actor)
       const attachments = input.contextAttachments === undefined ? [] : input.contextAttachments
       if (!isContextAttachments(attachments)) return yield* new SessionAccessError({ code: "invalid-attachments" })
       yield* existing(actor, "prompt", input.sessionID)
-      const { contextAttachments, ...nativeInput } = input
+      const { contextAttachments, contextTransferProof, ...nativeInput } = input
       return yield* session.prompt(nativeInput).pipe(Effect.provideService(PrivatePromptContext, {
         actor,
         references: attachments.map((attachment) => ({
@@ -114,6 +116,7 @@ export const makeSessionAccess = Effect.fn("SessionAccess.make")(function* (poli
           }),
           contentHash: attachment.contentHash,
         })),
+        proof: contextTransferProof,
       }))
     }),
     resume: (actor: SessionActor, sessionID: SessionSchema.ID) =>

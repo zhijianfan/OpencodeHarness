@@ -100,10 +100,21 @@ export function makeTransferReadiness(options?: {
         return yield* grantSnapshot(input)
       })
 
+    const releaseLease = (lease: LeaseState): Effect.Effect<void> =>
+      lock.withPermit(
+        Effect.gen(function* () {
+          lease.active--
+          if (lease.active !== 0 || lease.accepting) return
+          if (state.lease === lease) state.lease = undefined
+          if (lease.drained) yield* Deferred.succeed(lease.drained, undefined)
+        }),
+      )
+
     return {
       withPermit: <A, E, R>(
         input: { readonly sessionID: string; readonly workspaceID?: string; readonly proof?: RequestProof },
         run: (mode: Mode) => Effect.Effect<A, E, R>,
+        deferRelease?: (release: Effect.Effect<void>) => Effect.Effect<void>,
       ): Effect.Effect<A, E, R> => {
         const request = {
           workspaceID: input.workspaceID,
@@ -132,17 +143,13 @@ export function makeTransferReadiness(options?: {
             }),
           ),
           (lease) => Effect.suspend(() => run(lease ? "v2-enriched" : "v1-clean-only")),
-          (lease) =>
-            !lease
-              ? Effect.void
-              : lock.withPermit(
-                  Effect.gen(function* () {
-                    lease.active--
-                    if (lease.active !== 0 || lease.accepting) return
-                    if (state.lease === lease) state.lease = undefined
-                    if (lease.drained) yield* Deferred.succeed(lease.drained, undefined)
-                  }),
-                ),
+          // `deferRelease` only postpones releasing an acquired lease. It must
+          // never influence acquisition, the decided mode, or clean-only runs.
+          (lease) => {
+            if (!lease) return Effect.void
+            const release = releaseLease(lease)
+            return deferRelease ? Effect.suspend(() => deferRelease(release)) : release
+          },
         )
       },
       grant: (input: LeaseInput) => grantSnapshot({ ...input }),

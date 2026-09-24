@@ -2,6 +2,7 @@
   "version": 1,
   "upstreamCommit": "b02acc1e30ef55f7f181fec8d2f241d26f022683",
   "scope": "isolated modular proof workspace; not the production integration",
+  "engineeringReview": {"milestone": "T05/T06 G1B feasibility", "decision": "accept-explicit-maintained-replacements", "record": "compat/OWNED_RUNNER_DECISION.md", "acceptance": "compat/G1B_ACCEPTANCE.md", "productionReleaseApproved": false},
   "integrations": [
     {
       "id": "proof-database-placement",
@@ -17,7 +18,7 @@
       "nativeBoundary": "SessionInput.admit(events argument) -> EventV2.publish(options.commit)",
       "owner": "modular/packages/adapters-opencode/src/admission.ts",
       "behavior": "Authorize and freeze privately, delegate native admission, commit extension sidecar in native transaction, check exact retry, wake after commit only when requested.",
-      "limitations": ["Does not intercept stock SessionV2.prompt", "Does not cover all baseline admission entrypoints"],
+      "limitations": ["Historical low-level proof helper only; not the selected application prompt ingress or a public package export", "Actual SessionV2 create/prompt decoration is inventoried separately below"],
       "evidence": "native-boundary.test.ts; event-boundary.test.ts (enclosing-transaction wake deferral)"
     },
     {
@@ -37,7 +38,7 @@
       "delegated": ["durable event storage", "sequence and replay-owner reconciliation", "native projectors", "native durable history decoding"],
       "replaced": ["public notification delivery timing", "durable reader fencing", "atomic replayAll wrapper", "post-commit action scheduling"],
       "restrictions": ["Outer writes must use EventBoundary.transaction", "Batch writes cannot escape their owning fiber or kernel", "This requires entrypoint auditing before full production adoption"],
-      "assembly": "createMediatedKernel; used by the external proof host layout repository",
+      "assembly": "createMediatedKernel and the selected one-graph Session/native HTTP/application composition; layout borrows that runtime",
       "evidence": "event-boundary.test.ts; host/static-card.test.ts"
     },
     {
@@ -56,7 +57,7 @@
       "owner": "modular/packages/adapters-opencode/src/runner.ts",
       "replaced": ["provider-attempt and durable-continuation orchestration", "private-aware request and compaction integration", "Location validation before interrupted-tool repair", "registration-safe local tool startup"],
       "delegated": ["inbox promotion", "history selection", "Context Epoch", "agent/model selection", "LLM event publisher", "tool registry/settlement", "output bounding", "snapshots", "native SessionRunCoordinator"],
-      "limitations": ["Focused failure/permission-error and child bridge comparisons pass; complete permission UI/provider/task_batch/legacy coverage remains incomplete", "This is an explicitly maintained native-runtime replacement"],
+      "limitations": ["Selected-graph failure/permission-error and actual parent-tool/child ownership proof passes; full live-provider/permission-UI and retained feature/host conversion remain T10-T13", "This is an explicitly maintained native-runtime replacement accepted for the bounded G1B milestone"],
       "review": "compat/OWNED_RUNNER_DECISION.md",
       "evidence": "runner.test.ts; session-runtime.test.ts; compat/RUNNER_CONFORMANCE.md"
     },
@@ -68,8 +69,8 @@
       "replaced": ["local execution service composition", "cause transport through native coordinator completion", "pending-only child and forced native admission views sharing one owner"],
       "delegated": ["one native coordinator instance", "same-Session serialization and joining", "advisory wake coalescing and successors", "active ownership and interruption", "Session placement lookup and Location layer map"],
       "reason": "Pinned Effect beta.83 mutates the live Deferred listener array on interruption, stranding another joined waiter. Box the drain cause in a masked typed error channel and restore it after each native wait callback; no second execution owner or scheduler is introduced.",
-      "limitations": ["Exact-pin workaround must be reevaluated on Effect/native upgrades", "Task-batch child ownership and complete host entrypoints remain pending"],
-      "evidence": "session-execution.test.ts; child-runner.test.ts; session-runtime.test.ts; compat/RUNNER_CONFORMANCE.md"
+      "limitations": ["Exact-pin workaround must be reevaluated on Effect/native upgrades", "Full task_batch product integration and production host conversion remain later gates; parent-tool child ownership is covered"],
+      "evidence": "session-execution.test.ts; child-runner.test.ts; parent-tool-child.test.ts; session-runtime.test.ts; compat/RUNNER_CONFORMANCE.md"
     },
     {
       "id": "native-session-prompt-decoration",
@@ -77,15 +78,15 @@
       "nativeBoundary": "SessionV2.node exported implementation, native create and EventV2.project(PromptAdmitted)",
       "owner": "modular/packages/adapters-opencode/src/session-facade.ts; session-classification.ts",
       "delegated": ["native Session constructor and create/adopt behavior", "MIME normalization", "native prompt reconciliation", "all methods other than create/prompt"],
-      "replaced": ["managed prompt preparation and private identity validation", "atomic private admission projector guard and full snapshot retention", "post-commit wake scheduling", "atomic fresh-creation runtime classification and reversible compatibility metadata"],
+      "replaced": ["managed prompt preparation and private/clean immutable identity validation", "readiness permit through owning commit/rollback", "atomic private admission projector guard and full snapshot retention", "post-commit wake scheduling", "atomic fresh-creation runtime classification, explicit replay-owner provisioning and reversible compatibility metadata"],
       "limitations": ["Managed callers must provide PrivatePromptContext", "Verified restore uses a scoped internal permit", "Historical adoption never silently reclassifies", "Owned Session HTTP is wired; all legacy/embedded callers are not"],
-      "evidence": "session-facade.test.ts; session-classification.test.ts; input-compatibility.test.ts; session-runtime.test.ts"
+      "evidence": "session-facade.test.ts; readiness-admission.test.ts; session-classification.test.ts; input-compatibility.test.ts; session-runtime.test.ts"
     },
     {
       "id": "selected-application-http",
       "classification": "extend",
       "nativeBoundary": "Exported Server Api/handlers/middleware/Auth over one externally assembled native AppNodeBuilder graph",
-      "owner": "modular/packages/adapters-opencode/src/native-http.ts; application.ts; session-http.ts; session-access.ts; layout.ts",
+      "owner": "modular/packages/adapters-opencode/src/native-http.ts; application.ts; session-http.ts; session-access.ts; transfer-http.ts; layout.ts",
       "behavior": "Native fallback and actor-aware owned Session routes borrow the same runtime as layout persistence; owned Session prefixes cannot fall through to raw native handlers.",
       "limitations": ["Full legacy/CLI/desktop/embedded/TUI parity is not claimed", "Browser native/extension event multiplexing remains pending", "Nonempty context references need the extracted real catalog policy"],
       "evidence": "native-http.test.ts; application.test.ts; session-http.test.ts; session-access.test.ts; host/static-card.test.ts"
@@ -94,10 +95,10 @@
       "id": "legacy-private-compatibility",
       "classification": "extend",
       "nativeBoundary": "Native durable codecs, Event replay, SessionInput and Context Epoch within EventBoundary.transaction",
-      "owner": "modular/packages/adapters-opencode/src/legacy-context.ts; legacy-bundle.ts; legacy-event.ts; legacy-projection.ts; context-renderer.ts; transfer-spool.ts; transfer-readiness.ts; transfer-topology.ts",
-      "behavior": "Lossless fork V1/V2 context/lifecycle metadata, immutable full-snapshot admission, authorized atomic BundleV1 restoration/export, encrypted bounded spool and instance-local readiness/topology helpers.",
-      "limitations": ["Spool/readiness are not yet integrated into complete authenticated paged transfer orchestration", "Copied-data migration/recovery/rollback remains pending"],
-      "evidence": "legacy-*.test.ts; input-compatibility.test.ts; context-renderer.test.ts; transfer-*.test.ts"
+      "owner": "modular/packages/adapters-opencode/src/legacy-context.ts; legacy-bundle.ts; legacy-event.ts; legacy-projection.ts; legacy-deletion.ts; context-renderer.ts; transfer-protocol.ts; transfer-spool.ts; transfer-source.ts; transfer-receiver.ts; transfer-http.ts; transfer-client.ts; transfer-readiness.ts; transfer-topology.ts; fork-session-copy.ts",
+      "behavior": "Lossless fork V1/V2 context/lifecycle metadata, immutable clean/private admission, authorized atomic BundleV1 restore/export including local-revert proof reconstruction, encrypted bounded source/receiver transfer, real HTTP client/peer and admission-wired readiness, durable completion receipts and representative copied-fork Session import.",
+      "limitations": ["Unfinished encrypted staging is process-local and restarts after loss; durable receipts recover committed transfers", "Offline copy importer deliberately rejects deleted-target reconstruction and unrelated product tables; full product migration/rollback remains T12"],
+      "evidence": "legacy-*.test.ts; local-revert-transfer.test.ts; input-compatibility.test.ts; readiness-admission.test.ts; context-renderer.test.ts; transfer-*.test.ts; application-transfer.test.ts; fork-session-copy.test.ts"
     },
     {
       "id": "owned-child-composition",
@@ -105,8 +106,8 @@
       "nativeBoundary": "Native Project/Session Created event, decorated Session prompt and shared PendingSessionExecution",
       "owner": "modular/packages/adapters-opencode/src/child-runner.ts",
       "behavior": "Explicit actor/parent/Location authorization; native child creation, runtime metadata and admission in one transaction; immutable configuration retry and pending-only drain through the existing native coordinator.",
-      "limitations": ["task_batch registration and full parent/descendant cancellation wiring remain pending", "Existing legacy/mixed/unclassified Sessions cannot be adopted as v2 children"],
-      "evidence": "child-runner.test.ts; session-classification.test.ts; session-execution.test.ts"
+      "limitations": ["Full task_batch manifests/capture/archival registration remains T11; actual parent-tool cancellation and joining semantics are proven", "Existing legacy/mixed/unclassified Sessions cannot be adopted as v2 children"],
+      "evidence": "child-runner.test.ts; parent-tool-child.test.ts; session-classification.test.ts; session-execution.test.ts"
     }
   ],
   "copiedNativeProductionImplementations": [],

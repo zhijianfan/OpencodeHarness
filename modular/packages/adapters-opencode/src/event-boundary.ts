@@ -9,6 +9,8 @@ type Batch = {
   readonly owner: number
   readonly notifications: EventV2.Payload[]
   readonly afterCommit: Effect.Effect<void>[]
+  /** Deferred releases must survive nested rollback and run once after SQL. */
+  readonly afterTransaction: Effect.Effect<void>[]
   active: boolean
 }
 class CurrentBatch extends Context.Service<CurrentBatch, Batch>()("@cybermastery/EventBatch") {}
@@ -25,6 +27,13 @@ export interface EventBoundaryInterface {
   readonly events: EventV2.Interface
   readonly transaction: <A, E, R>(body: Effect.Effect<A, E, R>) => Effect.Effect<A, E | SqlError, R>
   readonly afterCommit: (body: Effect.Effect<void>) => Effect.Effect<void>
+  /**
+   * Schedules `release` in the owning outer transaction and runs it exactly
+   * once after that SQL boundary settles on both commit and rollback. When no
+   * owning batch exists it runs immediately. Unlike afterCommit, these releases
+   * are not discarded when a nested transaction rolls back.
+   */
+  readonly afterTransaction: (release: Effect.Effect<void>) => Effect.Effect<void>
 }
 
 export class EventBoundary extends Context.Service<EventBoundary, EventBoundaryInterface>()("@cybermastery/EventBoundary") {}
@@ -107,10 +116,18 @@ export function makeEventBoundaryNode(options: {
             return yield* Effect.die(new EventBoundaryViolation("Use EventBoundary.transaction as the outer transaction"))
           }
           const owner = yield* Effect.withFiber((fiber) => Effect.succeed(fiber.id))
-          const scope: Batch = { boundary: identity, owner, notifications: [], afterCommit: [], active: true }
+          const scope: Batch = { boundary: identity, owner, notifications: [], afterCommit: [], afterTransaction: [], active: true }
           const result = yield* gate.withPermit(
             database.db.transaction(() => restore(body).pipe(Effect.provideService(CurrentBatch, scope)), { behavior: "immediate" }),
-          ).pipe(Effect.onExit(() => Effect.sync(() => { scope.active = false })))
+          ).pipe(Effect.onExit(() => Effect.gen(function* () {
+            scope.active = false
+            // The SQL boundary has settled (commit, rollback, cancellation or
+            // defect). Deferred lease releases run exactly once here, never on
+            // nested rollback, and never after a notification failure.
+            const released = yield* Effect.forEach(scope.afterTransaction, (release) => Effect.exit(release))
+            const failure = released.find((exit) => exit._tag === "Failure")
+            if (failure) yield* Effect.failCause(failure.cause)
+          })))
           // The SQL connection and read gate are released before external
           // listeners run, so reentrant publication does not deadlock.
           for (const event of scope.notifications) yield* notify(event)
@@ -153,6 +170,11 @@ export function makeEventBoundaryNode(options: {
           const current = yield* batch
           if (!current) return yield* body
           current.afterCommit.push(body)
+        }),
+        afterTransaction: (release) => Effect.gen(function* () {
+          const current = yield* batch
+          if (!current) return yield* release
+          current.afterTransaction.push(release)
         }),
       })
     })),

@@ -1,4 +1,4 @@
-# Wave 4: runner and execution conformance
+# Runner and execution conformance
 
 Date: 2026-09-23. Baseline: `d8fdf95`. Official pin: `b02acc1e30ef55f7f181fec8d2f241d26f022683`. Effect: `4.0.0-beta.83`; Bun: `1.3.14`.
 
@@ -26,11 +26,19 @@ The workaround replaces **local execution composition**, so the selected graph n
 - Native execution integration: simultaneously blocked provider attempts for different Sessions; joined resumes for one Session; interruption of A while B remains active; provider finalizer counts; queued admit-only input surviving interruption, exact retry and later explicit resume without re-freezing.
 - Previous private admission, provider reconstruction, compaction and atomic restore proofs remain covered.
 
-Permission-error mapping tests are not full permission UI/HTTP coverage. Task-batch child/external-resume ownership, all supported transports, the complete provider matrix and fork paged-transfer/migration contracts remain open. G1B is partial and legacy removal remains blocked.
+Permission-error mapping tests do not claim full live-provider or permission UI acceptance. Since wave4, the selected graph has gained real native/owned HTTP, readiness admission, complete private transfer, parent-tool/child/external-resume ownership proofs and a representative copied-fork Session upgrade. Production task_batch capture/manifests, all retained legacy feature/host conversions and complete product-data migration remain T10–T14 work. The explicit G1B maintenance decision is now recorded in OWNED_RUNNER_DECISION.md; final gate status follows the completed acceptance review, not this historical wave4 checkpoint.
+
+### Later executed boundary evidence
+
+- `child-runner.test.ts`: atomic native creation/admission, immutable configuration retry, no forced completed retry, shared child/resume interruption and independent children.
+- `parent-tool-child.test.ts`: actual parent Location ToolRegistry invokes a batch-shaped delegation probe; external resume joins the child's native owner; parent cancellation cleans a tool-owned child without hijacking a pre-existing owner. Master replaced scheduler-count guesses with an observed real pending waiter and asserts interruption exit causes.
+- `readiness-admission.test.ts`: no-lease clean identity, explicit-reference refusal, private lease scopes and release through enclosing commit/rollback/cancellation, imported clean/private retries.
+- `application-transfer.test.ts`, `transfer-client.test.ts`, `local-revert-transfer.test.ts`: real network, source-to-receiver client, local native revert proofs, checkpoint/epoch transport, receipt restart, deadlines/authentication and bounded-cache behavior.
+- `fork-session-copy.test.ts`: digest-bound serialized source image, native fork columns, target reopen and exact prompt retry, preserved native/extension migration ledgers, immutable source/copy bytes. This is the early representative experiment, not a claim that full T12 rollback/product migration is complete.
 
 ## Verification
 
-`bun run verify:proof` from `modular` completed successfully at `2026-09-23T10:20:25.984Z`:
+Historical wave4 `bun run verify:proof` from `modular` completed successfully at `2026-09-23T10:20:25.984Z`:
 
 - **192 pass, 1 POSIX-only skip, 0 fail**; adapter tests: **125 pass**.
 - Eight modular package/app typechecks, production frontend build and real-browser LTR/RTL smoke passed.

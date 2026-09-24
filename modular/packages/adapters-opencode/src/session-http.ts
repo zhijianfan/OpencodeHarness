@@ -24,6 +24,7 @@ import { DateTime, Effect, Option, Schema, Stream } from "effect"
 import { isContextAttachments, makeSessionAccess, type SessionAccessPolicy, type SessionActor } from "./session-access"
 import type { createSessionRuntime } from "./session-runtime"
 import { AdmissionError } from "./admission"
+import { makeRequestProof } from "./transfer-readiness"
 
 const Create = Schema.Struct({
   id: Schema.optional(SessionSchema.ID),
@@ -170,9 +171,16 @@ export async function createSessionHttp(input: {
           const payload = required(Schema.decodeUnknownOption(Prompt)(await body()))
           const attachments = payload.contextAttachments
           if (attachments !== undefined && !isContextAttachments(attachments)) throw attachmentError()
+          // Readiness proof is transport-only. Never accept a proof or actor
+          // shape from the request body, and a partial pair grants nothing.
+          const topologyRevision = request.headers.get("x-opencode-session-context-topology")
+          const requestToken = request.headers.get("x-opencode-session-context-lease")
+          const contextTransferProof = topologyRevision !== null && requestToken !== null
+            ? makeRequestProof({ topologyRevision, requestToken })
+            : undefined
           return Response.json({ data: encodeAdmitted(await run(access.prompt(actor, {
             sessionID, id: payload.id, prompt: payload.prompt, delivery: payload.delivery, resume: payload.resume,
-            contextAttachments: attachments,
+            contextAttachments: attachments, contextTransferProof,
           }))) })
         }
         if (path === "agent") {

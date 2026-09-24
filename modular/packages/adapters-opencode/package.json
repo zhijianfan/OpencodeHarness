@@ -7,7 +7,10 @@
     "./capabilities": "./src/capabilities.ts",
     "./session-runtime": "./src/session-runtime.ts",
     "./session-context": "./src/session-facade.ts",
-    "./application": "./src/application.ts"
+    "./application": "./src/application.ts",
+    "./child-runner": "./src/child-runner.ts",
+    "./transfer-client": "./src/transfer-client.ts",
+    "./fork-session-copy": "./src/fork-session-copy.ts"
   },
   "dependencies": {
     "@cybermastery/contracts": "workspace:*",

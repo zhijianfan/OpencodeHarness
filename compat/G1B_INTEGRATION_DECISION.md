@@ -19,3 +19,7 @@ Normal request decoration alone is insufficient because native automatic compact
 ## Release condition
 
 The new Event boundary can resolve one specific blocker, but G1B remains partial until private reconstruction, compaction, all supported admission paths, full bundle/epoch/deletion restore and notification visibility are covered. Existing integrated code is retained until the full gates pass.
+
+## 2026-09-24 milestone result
+
+Those bounded T05/T06 mechanisms now have executed evidence and a passing independent follow-up review: **486 pass / 1 platform skip / 0 fail**, source unchanged. See `G1B_ACCEPTANCE.md`, `OWNED_RUNNER_DECISION.md` (including the explicit fork-child replacement and measured ownership surface), and `../modular/G1B_REVIEW.md`. G1B feasibility is passed; full feature/host/product migration and production release remain separate blocked gates. Integrated code remains retained.

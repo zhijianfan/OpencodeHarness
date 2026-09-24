@@ -25,7 +25,7 @@ These lanes share only already-frozen exported signatures. Detailed ownership is
 
 ## Contract lanes (T01/T05/T06/T12)
 
-Waves 5–10 have implemented authorized Session/native HTTP over one graph, reversible fork codecs and transactional restore/export, complete supported input snapshots, an encrypted spool, instance-local readiness helpers, shared pending execution and the actual child API. Latest proof: 399 pass / 1 platform skip. Remaining transfer work is orchestration and authenticated paged HTTP, not rebuilding the validated codec/spool pieces. `COMPLETION_WORKLOG.md` is the detailed ledger.
+Waves 5–15 have completed the bounded G1B proof: authorized one-graph Session/native HTTP, private/clean readiness admission, reversible fork codecs, atomic full transfer with local-revert proofs, real source/receiver/client/peer HTTP, durable receipts, copied-fork Session upgrade and actual parent-tool child ownership. Latest full proof: **486 pass / 1 platform skip / 0 fail**. Independent read-only follow-up passes the milestone and the measured replacement decision is recorded. `G1B_ACCEPTANCE.md` defines its boundary; `COMPLETION_WORKLOG.md` is the detailed ledger.
 
 The master first completes the relevant source inventory and pins the boundary DTOs. Then fan out:
 
@@ -35,7 +35,7 @@ The master first completes the relevant source inventory and pins the boundary D
 
 The admission lane does not wait for paged transfer. The codec lane does not edit Session/HTTP composition. Restoration wiring follows the codec contract; authenticated paged spool/readiness follows the frozen restore interface. Do not parallelize two writers on projection.ts, Event mediation or one migration database.
 
-**G1B barrier:** supported admission surfaces, native provider/compaction behavior, child/external-resume ownership, lossless fork transfer, rollback and notification/read isolation. These remain acceptance criteria, not declarations of completion.
+**G1B barrier passed (T05/T06 feasibility):** selected admission surfaces, native provider/compaction behavior, parent-tool/child/external-resume ownership, lossless fork transfer, rollback and notification/read isolation. Full product features, migration and production-host conversion retain their separate acceptance gates below.
 
 ## Feature extraction waves after G1A/G1B review (T07-T11)
 

@@ -4,9 +4,11 @@ Date: 2026-09-24
 
 ## Overall state
 
-**Partially implemented. Official upstream, the one-graph HTTP/proof host, private-aware Session runtime, child execution API and lossless fork restore/export work. Full host/provider parity, paged transfer integration, feature extraction and copied-data migration still block removal of the integrated runtime.**
+**G1B T05/T06 feasibility has passed; modularization remains partial.** The one-graph host, private/clean readiness admission, native provider/compaction integration, parent-tool child ownership, authenticated paged transfer and representative copied-fork Session upgrade have executed proof and independent review. Full feature extraction, product-data migration and production host/provider acceptance still block removal of the integrated runtime.
 
 Checkpoints `48b592f` and `d8fdf95` were pushed to `OpencodeHarness/main`; their pre-push hooks passed 31 typecheck tasks. This HTTP/child/transfer-foundation checkpoint collects waves 4–10; consult Git history for its publication. `D:\CyberMastery` remains unchanged.
+
+The requested push of waves 4–10 completed as **f2ff727b93eeea0a729b3aa67743da3d2c84b95a**, with remote main verified and 31/31 pre-push tasks passing. This G1B completion checkpoint collects waves11–15; consult Git history for its publication.
 
 ## Completed work
 
@@ -31,9 +33,13 @@ Checkpoints `48b592f` and `d8fdf95` were pushed to `OpencodeHarness/main`; their
 19. Revised the remaining work into dependency-aware parallel lanes and completed a two-worker Astra High wave with verified model/variant, disjoint file ownership and a master-only integration/test barrier.
 20. Added authorized Session access/HTTP and native exported Server handlers over one selected application graph. Layout persistence borrows the same runtime; owned Session prefixes do not fall through to raw native handlers.
 21. Added lossless fork context/event/BundleV1 validation, tagged renderer-v2 support, transactional restore/export with runtime metadata, deletion proofs, immutable retries and epoch fencing. Supported new admissions persist complete snapshots and reversible compatibility metadata.
-22. Extracted the encrypted bounded transfer spool, including chunk/page retry integrity, expiry, limits and receipt binding, plus instance-local readiness/topology helpers. Full authenticated paged transport orchestration and readiness/admission wiring remain pending.
+22. Integrated encrypted bounded transfer source/receiver, chunk/page retry integrity, expiry/limits, authenticated HTTP, reusable client/peer, completed-snapshot eviction and durable completion receipts. Unfinished process-local staging restarts explicitly after loss; committed receipt retries survive host restart.
 23. Added shared pending-only/native-forced execution over the same native coordinator, followed by the authorized child API. Creation, classification and prompt admission commit atomically; exact completed retries do not cause another provider turn; external resume/interrupt share the child owner.
 24. Added fresh-Session runtime classification and reversible lifecycle metadata without changing public native events or silently classifying historical rows. Revoked admission rolls back an entire newly created child and its notifications. Latest implementation workers used the newly selected DeepSeek V4.1 Flash provider/model, with explicit high reasoning after max attempts exhausted their caps without edits.
+25. Wired one readiness manager into application admission and sync HTTP. Valid enrichment permits survive the actual enclosing commit/rollback; clean-only inputs skip recall and store a clean identity, and exact private/clean retries reconcile without reacquiring enrichment.
+26. Added real network source/receiver tests over actual application graphs, native Windows path codec use, native Session revert export/restore, and a digest-bound copied-fork Session import with target reopen, immutable source bytes and native/extension ledger checks.
+27. Added actual parent Location ToolRegistry batch-shaped child tests for external joining/interruption, parent cancellation, independently owned children and completed retries. The explicit six-module replacement decision measures 1,233 physical lines with delegated authority and pin-upgrade obligations.
+28. Completed independent read-only G1B review and follow-up. Initial partial findings are preserved; final verdict passes the bounded T05/T06 milestone. See `compat/G1B_ACCEPTANCE.md` and `modular/G1B_REVIEW.md`.
 
 The proof shell deliberately has only a static card grid. It does not claim that OperatingChat, MasterAgent, CtxPack, ChatRelay, skills, Scratchpad, all native screens or existing data have been fully extracted.
 
@@ -46,13 +52,13 @@ Machine-readable output: `compat/verification.json`.
 | Check | Result |
 | --- | --- |
 | Typechecks for eight modular packages/apps | Pass |
-| Modular contract, Canvas, client, compatibility, native-boundary, storage and HTTP tests | 398 pass, 1 skip, 0 fail |
+| Modular contract, Canvas, client, compatibility, native-boundary, storage and HTTP tests | 485 pass, 1 skip, 0 fail |
 | Real-browser static-card smoke | 1 pass; independent LTR and RTL contexts, save/sync/remove |
 | Independent Solid production build | Pass |
 | Integrated app typecheck and corrected MasterAgent registration suite | Previously verified pass; 4 tests, unchanged in this continuation |
 | Official upstream before/after attestation | Same pin, tree and source digest |
 
-The latest proof verification (2026-09-24T06:11:30.184Z) records **399 passing tests**, including **332 adapter tests**, with **one POSIX-only symlink case skipped on Windows**. The separately recorded integrated-app regression adds four earlier passes, not part of the latest proof command. The browser smoke drives installed Edge through a Node subprocess while the proof application remains on Bun. No toolchain upgrade was made. SQLite runtimes are disposed immediately; per-file suite cleanup unlinks temporary databases after test frames release Windows native statements, and cleanup failures remain test failures.
+The latest proof verification (2026-09-24T09:41:58.276Z) records **486 passing tests**, including **419 adapter tests**, with **one POSIX-only symlink case skipped on Windows**. The separately recorded integrated-app regression adds four earlier passes, not part of the latest proof command. The browser smoke drives installed Edge through a Node subprocess while the proof application remains on Bun. No toolchain upgrade was made. SQLite runtimes are disposed immediately; per-file suite cleanup unlinks temporary databases after test frames release Windows native statements, and cleanup failures remain test failures.
 
 This is not the full repository suite, a Linux run, live ChatGPT-site verification, complete migration coverage, all native host surfaces or an upstream-pin upgrade drill.
 
@@ -65,15 +71,15 @@ The original native-boundary suite preserves two counterexamples relevant to G1B
 
 The new mediated graph fixes these timing failures for managed operations. It does not claim the stock implementation acquired a new `replayBatch` method or that arbitrary unmanaged outer transactions became safe.
 
-The core wiring gap is addressed by explicit Session, runner and execution-composition replacements, including native/owned HTTP and child/external-resume integration. Remaining coverage includes all legacy/embedded transports, actual permission UI flows, task_batch parent/descendant ownership and the complete provider matrix. The separate legacy adapter now validates/restores/exports BundleV1 losslessly; paged HTTP/snapshot/receipt orchestration and production copied-data migration are still incomplete.
+The core wiring gap is addressed by explicit Session, runner and execution-composition replacements, including native/owned HTTP and actual parent-tool/child/external-resume integration. The bounded G1B proof now passes. Remaining production coverage includes retained legacy/embedded feature conversion, permission UI/live-provider and full host acceptance, full task_batch product capture/manifests, complete copied product-data migration and upgrade/rollback drills. These later gates are not made complete by the private transfer/copy feasibility proof.
 
 Consequently, full-parity startup throws `FullParityUnavailable`. `compat/gates.json` records `legacyRemovalAllowed: false`. Deleting the integrated runtime now would remove behavior before a replacement is proven, contrary to the approved parity and migration constraints.
 
 ## Next required implementation work
 
 1. Finish the baseline's per-path feature/disposition review, route/event/default inventory and schema migration inventory.
-2. Integrate paged transfer orchestration and readiness/admission gates over the proven codecs/spool. Complete actual permission flows, task_batch child/parent ownership and the supported provider/transport matrix beyond the passing focused runtime cases.
-3. Complete G1B across every supported admission entrypoint and the existing fork transfer/schema contracts, beyond the passing core runtime and proof-format restoration paths.
+2. Freeze feature contracts for CtxPack/catalog, shell/descriptors/drafts and skills/relay against the completed G1B boundary.
+3. Complete actual permission UI/live-provider and production transport/host acceptance in the later conversion matrix; keep full feature task_batch capture/model/retry/archival requirements intact.
 4. Extract the remaining features with the corrected preservation inventory, including existing task_batch manifest/result capture, model pinning, retry and archival.
 5. Complete current-fork data migration/rollback and the combined-host/CLI/desktop/embedded/TUI parity matrix, then perform an official-pin upgrade drill.
 6. Remove the old integrated source only after those gates pass; move the validated isolated workspace into the final production topology at that point.
@@ -90,7 +96,7 @@ Seven workers across three waves used `opencode-go/deepseek-v4.1-flash` with var
 
 See `compat/workers.json` and `.opencode/parallel/zero-patch-wave-*`. Wave 3 supplied the checkpoint and history helpers; the master implemented transaction mediation, projection restore and provider/compaction integration. The worker definition is loaded by new OpenCode sessions; existing sessions retain their previously loaded configuration.
 
-The current manifest is `.opencode/parallel/completion-wave-10/MANIFEST.md`; new workers use `harness-worker` with explicit `--model opencode-go/deepseek-v4.1-flash --variant high`. The running application does not need a restart for CLI dispatch.
+Current completion manifests run through `.opencode/parallel/completion-wave-15/MANIFEST.md`; workers use `harness-worker` with explicit `--model opencode-go/deepseek-v4.1-flash --variant high`. The independent read-only reviewer uses `harness-g1b-review` with the same model/variant. Fresh CLI processes load their configuration.
 
 ## Entry points
 

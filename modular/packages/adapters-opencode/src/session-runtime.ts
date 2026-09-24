@@ -3,17 +3,19 @@ import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { makeGlobalNode } from "@opencode-ai/core/effect/app-node"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { EventV2 } from "@opencode-ai/core/event"
+import { LocationServiceMap } from "@opencode-ai/core/location-service-map"
 import { ProjectV2 } from "@opencode-ai/core/project"
 import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionStore } from "@opencode-ai/core/session/store"
 import { node } from "@opencode-ai/core/session/runner/llm"
-import { Layer, ManagedRuntime } from "effect"
+import { Effect, Layer, ManagedRuntime } from "effect"
 import { makeEventBoundaryNode, makeMediatedEventNode } from "./event-boundary"
 import { initializeExtension } from "./kernel"
 import { makePrivateRunnerNode, type RunnerIdentity } from "./runner"
 import { makeSessionFacadeNode, type SessionPolicy } from "./session-facade"
 import { executionCompositionNode, pendingSessionExecutionNode, sessionExecutionNode } from "./session-execution"
+import type { makeTransferReadiness } from "./transfer-readiness"
 
 /**
  * Native Session/coordinator with explicit admission, Event, runner and
@@ -21,9 +23,16 @@ import { executionCompositionNode, pendingSessionExecutionNode, sessionExecution
  */
 export type SessionRuntimeOptions = {
   readonly filename: string
+  readonly replayOwner?: string
   readonly policy: SessionPolicy
   readonly replacements?: LayerNode.Replacements
   readonly onRunnerConstruct?: (identity: RunnerIdentity) => void
+  /**
+   * Optional shared readiness manager. When supplied, managed prompts gate
+   * private enrichment on a valid transfer lease; absent, the previous private
+   * snapshot path is preserved unchanged.
+   */
+  readonly readiness?: Effect.Success<ReturnType<typeof makeTransferReadiness>>
 }
 
 export function createSessionRuntime(input: SessionRuntimeOptions) {
@@ -34,6 +43,7 @@ export function createSessionRuntime(input: SessionRuntimeOptions) {
 /** Let host composition add roots before the single native graph is compiled. */
 export function makeSessionGraph(input: SessionRuntimeOptions) {
   if (!input.filename) throw new Error("An explicit database filename is required")
+  if (input.replayOwner !== undefined && !input.replayOwner.trim()) throw new Error("A nonempty replay owner is required")
   const reserved = new Set([Database.node.name, EventV2.node.name, SessionV2.node.name, SessionExecution.node.name, SessionStore.node.name, executionCompositionNode.name, pendingSessionExecutionNode.name, node.name])
   if (input.replacements?.some(([source]) => reserved.has(source.name))) throw new Error("Required integration nodes cannot be overridden")
   const database = makeGlobalNode({ service: Database.Service, layer: Database.layerFromPath(input.filename), deps: [] })
@@ -42,7 +52,7 @@ export function makeSessionGraph(input: SessionRuntimeOptions) {
   const replacements: LayerNode.Replacements = [
     [Database.node, database],
     [EventV2.node, makeMediatedEventNode(boundary)],
-    [SessionV2.node, makeSessionFacadeNode(boundary, input.policy)],
+    [SessionV2.node, makeSessionFacadeNode(boundary, input.policy, input.readiness, input.replayOwner)],
     [SessionExecution.node, sessionExecutionNode],
     // Canonicalize this shared global node after dependency replacement; the
     // pinned hoister otherwise encounters rewritten and original identities.
@@ -53,7 +63,7 @@ export function makeSessionGraph(input: SessionRuntimeOptions) {
     ...(input.replacements ?? []),
   ]
   return {
-    root: LayerNode.group([SessionV2.node, SessionExecution.node, pendingSessionExecutionNode, SessionStore.node, EventV2.node, ProjectV2.node, Database.node, boundary, bootstrap]),
+    root: LayerNode.group([SessionV2.node, SessionExecution.node, pendingSessionExecutionNode, SessionStore.node, EventV2.node, ProjectV2.node, LocationServiceMap.node, Database.node, boundary, bootstrap]),
     replacements,
   }
 }

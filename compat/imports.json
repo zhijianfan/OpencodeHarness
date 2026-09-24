@@ -10,6 +10,7 @@
     "@opencode-ai/core/event",
     "@opencode-ai/core/session/input",
     "@opencode-ai/core/session/schema",
+    "@opencode-ai/core/session/sql",
     "@opencode-ai/core/session/message",
     "@opencode-ai/core/session/projector",
     "@opencode-ai/core/session",

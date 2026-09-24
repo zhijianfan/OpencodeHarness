@@ -9,6 +9,7 @@ import { Effect, Option, Schema } from "effect"
 import { sql } from "drizzle-orm"
 import { EventBoundary } from "./event-boundary"
 import { decodeLegacyContext, legacyReferenceHash, type LegacyJsonObject } from "./legacy-context"
+import type { Mode } from "./transfer-readiness"
 
 export type AdmissionRequest = {
   readonly sessionID: SessionSchema.ID
@@ -18,10 +19,12 @@ export type AdmissionRequest = {
   readonly delivery: "steer" | "queue"
   readonly resume?: boolean
   readonly references: readonly { readonly id: string; readonly contentHash: string }[]
+  /** Preparation hint only. Never part of `privateRequestIdentity`. */
+  readonly mode?: Mode
 }
 
 export class AdmissionError extends Schema.TaggedErrorClass<AdmissionError>()("CyberMastery.Admission", {
-  code: Schema.Literals(["unauthorized", "conflict", "missing-private-context", "invalid-snapshot"]),
+  code: Schema.Literals(["unauthorized", "conflict", "missing-private-context", "invalid-snapshot", "transfer-unavailable"]),
 }) {}
 
 export type FrozenInput = {

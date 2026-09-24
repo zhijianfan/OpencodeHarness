@@ -47,6 +47,7 @@ type Fixture = {
     body?: unknown
     credentials?: string | false
     signal?: AbortSignal
+    headers?: HeadersInit
   }) => Promise<Response>
 }
 
@@ -90,7 +91,7 @@ async function withApp(run: (fixture: Fixture) => Promise<void>, options: {
     await run({
       app, directory, workspaceID, requests, constructed,
       request: (path, options = {}) => {
-        const headers = new Headers()
+        const headers = new Headers(options.headers)
         if (options.credentials !== false) headers.set("Authorization", options.credentials ?? `Bearer ${token}`)
         if (options.body !== undefined) headers.set("Content-Type", "application/json")
         return app.fetch(new Request(`http://application.test${path}`, {
@@ -219,13 +220,20 @@ test("supplied policy freezes private attachments once and the Session overlay n
   const captured: { database?: Effect.Success<typeof Database.Service>; session?: SessionV2.Interface } = {}
   const privateContent = "PRIVATE_APPLICATION_SNAPSHOT"
   await withApp(async ({ app, request, requests, workspaceID }) => {
+    const proof = { topologyRevision: "application-private", requestToken: "a".repeat(64) }
+    expect((await request("/sync/start", { method: "POST", body: {
+      version: 1, action: "grant", ...proof, expiresAt: Date.now() + 30_000,
+    } })).status).toBe(200)
     expect((await request("/api/session", { method: "POST", body: { id: "ses_application_private" }, credentials: basic })).status).toBe(200)
     const payload = {
       id: "msg_application_private", prompt: { text: "public question" }, resume: false,
       contextAttachments: [attachment], actor: { userID: "attacker", workspaceID: "other" },
     }
     const path = "/api/session/ses_application_private/prompt"
-    const first = await request(path, { method: "POST", body: payload })
+    const first = await request(path, { method: "POST", body: payload, headers: {
+      "x-opencode-session-context-topology": proof.topologyRevision,
+      "x-opencode-session-context-lease": proof.requestToken,
+    } })
     expect(first.status).toBe(200)
     const admitted = await json(first)
     const retry = await request(path, { method: "POST", body: payload, credentials: basic })
@@ -281,16 +289,16 @@ test("default admission fails closed for references and rechecks recorded worksp
     const payload = { id: "msg_application_default", prompt: { text: "plain public question" }, resume: false }
     const unsupported = await request(path, { method: "POST", body: { ...payload, contextAttachments: [attachment] } })
     expect(unsupported.status).toBe(400)
-    expect(await json(unsupported)).toMatchObject({ _tag: "SessionContextAttachmentError", code: "missing-private-context" })
+    expect(await json(unsupported)).toMatchObject({ _tag: "SessionContextAttachmentError", code: "transfer-unavailable" })
     expect(requests).toHaveLength(0)
     const database = await app.runtime.runPromise(Database.Service)
     expect(await app.runtime.runPromise(database.db.get<{ message_id: string }>(sql`SELECT message_id FROM cm_private_input`))).toBeUndefined()
     expect((await request(path, { method: "POST", body: payload })).status).toBe(200)
     expect((await request(path, { method: "POST", body: payload })).status).toBe(200)
-    expect(await app.runtime.runPromise(database.db.get<{ api_content: string; renderer_version: number }>(sql`
-      SELECT api_content, renderer_version FROM cm_private_input WHERE message_id = ${payload.id}`))).toEqual({
-      api_content: payload.prompt.text, renderer_version: 1,
-    })
+    expect(await app.runtime.runPromise(database.db.get(sql`SELECT message_id FROM cm_private_input WHERE message_id = ${payload.id}`)))
+      .toBeUndefined()
+    expect(await app.runtime.runPromise(database.db.get<{ message_id: string }>(sql`
+      SELECT message_id FROM cm_clean_input WHERE message_id = ${payload.id}`))).toEqual({ message_id: payload.id })
     await app.runtime.runPromise(database.db.run(sql`UPDATE cm_workspace SET owner_id = 'other-owner' WHERE id = ${workspaceID}`))
     const denied = await request(path, { method: "POST", body: payload })
     expect(denied.status).toBe(400)

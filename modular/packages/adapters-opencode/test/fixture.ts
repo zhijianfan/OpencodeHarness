@@ -3,6 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Database } from "@opencode-ai/core/database/database"
 import { SessionSchema } from "@opencode-ai/core/session/schema"
+import { SessionTable } from "@opencode-ai/core/session/sql"
 import { EventV2 } from "@opencode-ai/core/event"
 import { SessionEvent } from "@opencode-ai/schema/session-event"
 import { SessionMessage } from "@opencode-ai/core/session/message"
@@ -28,7 +29,7 @@ export function createMediatedFixtures() {
         VALUES ('project', ${directory}, '[]', 0, 0)`)
       yield* database.db.run(sql`INSERT INTO session
         (id, project_id, slug, directory, title, version, time_created, time_updated, workspace_id)
-        VALUES (${sessionID}, 'project', 'proof', ${directory}, 'Proof', '1', 0, 0, 'workspace-proof')`)
+        VALUES (${sessionID}, 'project', 'proof', ${SessionTable.directory.mapToDriverValue(directory)}, 'Proof', '1', 0, 0, 'workspace-proof')`)
     })).catch(async (error: unknown) => {
       await runtime().dispose()
       state.runtime = undefined

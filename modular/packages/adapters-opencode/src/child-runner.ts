@@ -15,6 +15,7 @@ import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { WorkspaceV2 } from "@opencode-ai/core/workspace"
 import { SessionMessage } from "@opencode-ai/schema/session-message"
 import { Cause, Effect, Schema } from "effect"
+import { sql } from "drizzle-orm"
 import { EventBoundary } from "./event-boundary"
 import { PrivatePromptContext } from "./session-facade"
 import { PendingSessionExecution } from "./session-execution"
@@ -123,6 +124,9 @@ export function makeChildRunner(options: ChildRunnerOptions): Effect.Effect<
         const created = yield* store.get(childID)
         if (!created) return yield* Effect.die(`Created child Session projection was not found: ${childID}`)
         yield* recordV2SessionCreated(childID).pipe(Effect.provideService(Database.Service, database))
+        const owner = yield* database.db.get<{ owner_id: string | null }>(sql`
+          SELECT owner_id FROM event_sequence WHERE aggregate_id = ${parent.id}`).pipe(Effect.orDie)
+        if (owner?.owner_id) yield* events.claim(childID, owner.owner_id)
         return created
       })
 

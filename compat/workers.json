@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "currentPolicy": {
     "provider": "opencode-go",
     "model": "deepseek-v4.1-flash",
@@ -92,6 +92,35 @@
     "ownershipVerification": "Successful file operations in exported sessions touch only each worker's listed owned paths. No commands or successful exploration occurred. Available CLI tools were write/edit rather than the requested apply_patch; child attempted unavailable tools and those calls yielded no source.",
     "responseTokenCap": 65536,
     "verification": "2026-09-24T06:11:30.184Z: 399 pass, 1 POSIX-only skip, 0 fail; eight typechecks, frontend build, browser smoke and unchanged native source attestation."
+  },
+  "g1bContinuation": {
+    "waves": [11, 12, 13, 14, 15],
+    "model": "opencode-go/deepseek-v4.1-flash",
+    "variant": "high",
+    "workers": [
+      {"wave": 11, "task": "transfer-source", "sessionID": "ses_f2dda0feeffezBn5CItkDdMI13"},
+      {"wave": 11, "task": "transfer-receiver", "sessionID": "ses_f2dda0bd1ffeauqbpH0C7eC4AN", "retry": "First response exhausted 65536 reasoning tokens without edits; resumed same model/high with 131072 cap."},
+      {"wave": 12, "task": "transfer-http", "sessionID": "ses_f2db87323ffeYKLovzk5lsJ31v"},
+      {"wave": 12, "task": "readiness-admission", "sessionID": "ses_f2db872f4ffeW65KgQuOPkPGDz"},
+      {"wave": 13, "task": "network-transfer-acceptance", "sessionID": "ses_f2d9ce7c3ffeTwDcSz7k49XMrq"},
+      {"wave": 13, "task": "receiver-lifecycle", "sessionID": "ses_f2d9ce78effeygGgYsbvUiuZcF"},
+      {"wave": 13, "task": "fork-session-copy", "sessionID": "ses_f2d9ce6c0ffe2H0VgG1nolYInM"},
+      {"wave": 14, "task": "local-revert-deletions", "sessionID": "ses_f2d68f034ffeL0XdJUsVGkfJom"},
+      {"wave": 14, "task": "transfer-client-peer", "sessionID": "ses_f2d68efe9ffeINhULBzeNFnbS1"},
+      {"wave": 15, "task": "parent-tool-child-ownership", "sessionID": "ses_f2d48a94effeVu6fTl8OK7gifN"},
+      {"wave": 15, "task": "independent-g1b-review", "sessionID": "ses_f2d48a8faffeitAG2Fl1TKisyY", "agent": "harness-g1b-review", "result": "Initial partial verdict retained; follow-up passes bounded T05/T06 G1B after source/evidence recheck."}
+    ],
+    "audit": {
+      "modelVerification": "Exported coding sessions use only opencode-go/deepseek-v4.1-flash/high; reviewer explicitly dispatched with the same model/variant.",
+      "codingTools": "Successful write/edit operations stay inside each owned file list. No commands or successful exploration occurred. CLI exposed write/edit rather than apply_patch. Invalid/unavailable read attempts returned no source.",
+      "rejectedScopeAttempts": [
+        {"sessionID": "ses_f2db872f4ffeW65KgQuOPkPGDz", "path": ".opencode/parallel/completion-wave-12/_scratch-read.txt", "result": "write denied by permission; file does not exist"},
+        {"sessionID": "ses_f2d68efe9ffeINhULBzeNFnbS1", "path": "modular/packages/adapters-opencode/src/transfer-receiver.ts", "result": "identical placeholder edit rejected with no changes"}
+      ],
+      "reviewerTools": "Bounded read/glob/grep plus report-only write/edit; no commands/tests or implementation edits. Initial review and follow-up retained in modular/G1B_REVIEW.md.",
+      "barrier": "Master implementation and validation followed each coding-worker barrier. Contracts were frozen before dispatch; integration corrected reported gaps and rejected unsafe unfinished-spool resurrection.",
+      "verification": "2026-09-24T09:41:58.276Z: 486 pass, 1 POSIX-only skip, 0 fail; adapter419; eight typechecks, build, real browser smoke and unchanged native-source attestation."
+    }
   },
   "masterOwned": ["manifests", "native pin and source integrity", "baseline capture", "package installation", "domain and persistence", "admission facade", "HTTP composition", "Event-service mediation", "private projection restore", "provider and compaction adapters", "interruption-safe execution composition", "integration verification", "release gate decisions"],
   "nativeSourceEditsByWorkers": false

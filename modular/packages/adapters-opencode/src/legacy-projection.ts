@@ -4,13 +4,15 @@ import { SessionSchema } from "@opencode-ai/core/session/schema"
 import { SessionInput } from "@opencode-ai/core/session/input"
 import { Prompt } from "@opencode-ai/core/session/prompt"
 import { SessionMessage } from "@opencode-ai/schema/session-message"
+import { SessionEvent } from "@opencode-ai/schema/session-event"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { Effect, Option, Schema } from "effect"
 import { sql } from "drizzle-orm"
 import { SENTINEL } from "./checkpoint"
 import { EventBoundary } from "./event-boundary"
 import { LegacyBundleError, validateLegacyBundle, type LegacyPublicEvent, type ValidatedLegacyBundle } from "./legacy-bundle"
-import { decodeLegacyContext, legacyCanonical, legacyDigest, type LegacyJson } from "./legacy-context"
+import { decodeLegacyContext, legacyCanonical, legacyDigest, legacyReferenceHash, type LegacyJson } from "./legacy-context"
+import { reconcileLocalDeletions } from "./legacy-deletion"
 import { adaptLegacyEvent, LegacyEventError } from "./legacy-event"
 import { PrivateRestoreContext } from "./restore-context"
 
@@ -170,9 +172,10 @@ export function makeLegacyProjection(policy: {
           WHERE aggregate_id = ${scope.sessionID} AND target_kind = ${proof.targetKind} AND message_id = ${proof.targetMessageID}`)
         if (existing && existing.proof_json !== legacyCanonical(proof))
           return yield* new LegacyProjectionError({ code: "deletion-conflict" })
-        // Native projectors remain primary. The fork additionally removes pending
-        // inputs across a revert boundary. Augment only this authenticated target,
-        // fenced by its original admission identity; never sweep by sequence.
+        // The native revert projector already deletes pending inputs by the same
+        // admitted/promoted predicate. This targeted delete is an idempotent
+        // re-application fenced by the authenticated admission identity; never
+        // sweep by sequence.
         if (proof.targetKind === "input") {
           const target = yield* database.db.get<{ session_id: string; admitted_seq: number }>(sql`
             SELECT session_id, admitted_seq FROM session_input WHERE id = ${proof.targetMessageID}`)
@@ -183,6 +186,32 @@ export function makeLegacyProjection(policy: {
         }
         if (!existing) yield* database.db.run(sql`INSERT INTO cm_legacy_deletion (aggregate_id, target_kind, message_id, proof_json)
           VALUES (${scope.sessionID}, ${proof.targetKind}, ${proof.targetMessageID}, ${legacyCanonical(proof)})`)
+      }
+      // Imported clean admissions carry no private context or requirement. Their
+      // exact retries must reconcile without freezing, so register the same
+      // non-actor legacy clean identity the imported retry convention uses.
+      const promptAdmittedType = EventV2.versionedType(SessionEvent.PromptAdmitted.type, 1)
+      const admittedInputs = yield* database.db.all<{ id: string; admitted_seq: number }>(sql`
+        SELECT id, admitted_seq FROM session_input WHERE session_id = ${scope.sessionID}`)
+      for (const row of admittedInputs) {
+        const event = prepared.history.find((candidate) => candidate.seq === row.admitted_seq)
+        // Only an actual native admission may synthesize a clean marker. A V2
+        // marker, private context/requirement, deleted target or projected user
+        // message without a PromptAdmitted event is never silently clean.
+        if (!event || event.type !== promptAdmittedType || event.data.modelContextVersion === 2) continue
+        const privateRow = yield* database.db.get<{ message_id: string }>(sql`
+          SELECT message_id FROM cm_private_input WHERE message_id = ${row.id} AND session_id = ${scope.sessionID}`)
+        if (privateRow) continue
+        const requirement = yield* database.db.get<{ message_id: string }>(sql`
+          SELECT message_id FROM cm_private_requirement WHERE message_id = ${row.id} AND session_id = ${scope.sessionID}`)
+        if (requirement) continue
+        yield* requireInputRelation(scope.sessionID, row.id, row.admitted_seq, event)
+        // Never rewrite an existing local actor-inclusive clean identity.
+        const existing = yield* database.db.get<{ request_hash: string }>(sql`
+          SELECT request_hash FROM cm_clean_input WHERE message_id = ${row.id} AND session_id = ${scope.sessionID}`)
+        if (existing) continue
+        yield* database.db.run(sql`INSERT INTO cm_clean_input (message_id, session_id, request_hash)
+          VALUES (${row.id}, ${scope.sessionID}, ${"legacy:" + legacyReferenceHash([])})`)
       }
       if ((yield* EventV2.latestSequence(database.db, scope.sessionID)) !== prepared.bundle.sourceSeq)
         return yield* new LegacyProjectionError({ code: "source-sequence-mismatch" })
@@ -226,8 +255,24 @@ export function makeLegacyProjection(policy: {
         SELECT p.message_id, p.context_json, m.seq FROM cm_private_checkpoint p
         JOIN session_message m ON m.id = p.message_id AND m.session_id = p.session_id
         WHERE p.session_id = ${scope.sessionID} ORDER BY m.seq`)
-      const deletions = yield* database.db.all<{ proof_json: string }>(sql`SELECT proof_json FROM cm_legacy_deletion
+      const existingProofs = yield* database.db.all<{ proof_json: string }>(sql`SELECT proof_json FROM cm_legacy_deletion
         WHERE aggregate_id = ${scope.sessionID} ORDER BY json_extract(proof_json, '$.targetEvent.seq')`)
+      const nativeInputs = yield* database.db.all<{ id: string; admitted_seq: number; promoted_seq: number | null }>(sql`
+        SELECT id, admitted_seq, promoted_seq FROM session_input WHERE session_id = ${scope.sessionID}`)
+      const nativeMessages = yield* database.db.all<{ id: string; seq: number }>(sql`
+        SELECT id, seq FROM session_message WHERE session_id = ${scope.sessionID}`)
+      // A committed native revert removes the row and cascades its private sidecar,
+      // so the marker survives in history with no receipt. Derive the missing
+      // proofs from that recorded revert effect instead of trusting row absence.
+      const deletions = reconcileLocalDeletions({
+        aggregateID: scope.sessionID,
+        history,
+        messages: nativeMessages,
+        inputs: nativeInputs.map((row) => row.promoted_seq === null
+          ? { id: row.id, admittedSeq: row.admitted_seq }
+          : { id: row.id, admittedSeq: row.admitted_seq, promotedSeq: row.promoted_seq }),
+        existingProofs: existingProofs.map((row) => row.proof_json),
+      })
       const epoch = yield* database.db.get<EpochRow>(sql`SELECT baseline_seq, baseline, snapshot FROM session_context_epoch WHERE session_id = ${scope.sessionID}`)
       const payload = epoch ? { baseline: epoch.baseline, snapshot: parseJson(epoch.snapshot) } : undefined
       const prepared = validateLegacyBundle({
@@ -236,13 +281,22 @@ export function makeLegacyProjection(policy: {
           ...inputs.map((row) => envelope(history, row.admitted_seq, row.message_id, "input", row.snapshot_json)),
           ...checkpoints.map((row) => envelope(history, row.seq, row.message_id, "compaction", row.context_json)),
         ].sort((left, right) => left.seq - right.seq),
-        deletions: deletions.map((row) => parseJson(row.proof_json)),
+        deletions,
         ...(epoch && payload ? { epoch: {
           version: 1, kind: "context-epoch", aggregateID: scope.sessionID, sourceSeq,
           baselineSeq: epoch.baseline_seq, epochSchemaVersion: 1, contentHash: legacyDigest(payload), payload: legacyCanonical(payload),
         } } : {}),
       })
       yield* reconcileRuntime(scope.sessionID, history, false)
+      // The compatibility deletion table is also the manifest verifyManifest
+      // checks, so a proof derived from a committed native revert must be
+      // recorded for the bundle to stay self-consistent. INSERT OR IGNORE keeps
+      // every imported receipt byte-identical and only fills genuinely missing
+      // rows; the whole write stays inside this owning transaction.
+      for (const proof of deletions) {
+        yield* database.db.run(sql`INSERT OR IGNORE INTO cm_legacy_deletion (aggregate_id, target_kind, message_id, proof_json)
+          VALUES (${scope.sessionID}, ${proof.targetKind}, ${proof.targetMessageID}, ${legacyCanonical(proof)})`)
+      }
       yield* verifyManifest(scope.sessionID, prepared)
       return prepared.bundle
     }))

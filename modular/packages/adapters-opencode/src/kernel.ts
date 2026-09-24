@@ -65,6 +65,16 @@ export const initializeExtension = Effect.gen(function* () {
         BEGIN DELETE FROM cm_private_requirement WHERE message_id = OLD.id AND kind = 'input'; END`)
       yield* database.db.run(sql`CREATE TRIGGER IF NOT EXISTS cm_private_checkpoint_deleted AFTER DELETE ON session_message
         BEGIN DELETE FROM cm_private_requirement WHERE message_id = OLD.id AND kind = 'compaction'; END`)
+      // A clean admission identity is explicit: a missing private row can never
+      // be silently reclassified as clean, and a clean row can never carry
+      // private snapshot metadata.
+      yield* database.db.run(sql`CREATE TABLE IF NOT EXISTS cm_clean_input (
+        message_id TEXT PRIMARY KEY NOT NULL REFERENCES session_input(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES session(id) ON DELETE CASCADE,
+        request_hash TEXT NOT NULL
+      )`)
+      yield* database.db.run(sql`INSERT OR IGNORE INTO cm_migration (id, completed_at)
+        VALUES ('0005-clean-admission-identity', ${Date.now()})`)
       yield* database.db.run(sql`INSERT OR IGNORE INTO cm_migration (id, completed_at)
         VALUES ('0003-private-context-records', ${Date.now()})`)
     }),
