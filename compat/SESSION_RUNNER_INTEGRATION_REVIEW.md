@@ -4,6 +4,8 @@ Date: 2026-09-23. Official pin: `b02acc1e30ef55f7f181fec8d2f241d26f022683`.
 
 ## Implementation update after checkpoint 48b592f
 
+Wave 4 after `d8fdf95` adds stock/private failure comparisons, native creation/adoption and two-Location execution tests. Those tests exposed pinned cancellation defects, so the selected graph now installs the explicit `session-execution.ts` composition around one native coordinator and makes local tool registration cancellation-safe. See `RUNNER_CONFORMANCE.md` for counterexamples, exact workaround responsibilities and current validation; the earlier boundary analysis remains historical context.
+
 The owned replacement described below is now implemented in `runner.ts` and assembled by `session-runtime.ts`. Native `SessionV2.prompt`/`resume` flow through the private Session facade, native Location map and native execution coordinator. An executable integration test checks that root and Location runner use the identical Database, Event and SessionStore instances. Clean-mode comparison, private context, tools/step limits, queue/steer boundaries, compaction, overflow recovery and interruption have focused tests.
 
 This resolves the earlier absence of actual runner wiring for the core integration kernel. The broader legacy/HTTP/child/permission/provider matrix and fork transfer/data compatibility remain incomplete. See `OWNED_RUNNER_DECISION.md` and the replacement inventory; the historical boundary analysis below explains why the replacement was necessary.

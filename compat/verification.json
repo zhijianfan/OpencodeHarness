@@ -1,5 +1,5 @@
 {
-  "capturedAt": "2026-09-23T08:51:42.692Z",
+  "capturedAt": "2026-09-24T06:11:30.184Z",
   "scope": "modular proof workspace only; not full feature parity",
   "release": "blocked-see-gates.json",
   "success": true,
@@ -43,8 +43,8 @@
       "pass": 25,
       "fail": 0,
       "skip": 0,
-      "outputHash": "deb2c29691e60e3b2305f12a89d38f3055958caaf01fe2f2bc9d104632939ca4",
-      "output": "bun test v1.3.14 (0d9b296a)\n\n 25 pass\n 0 fail\n 93 expect() calls\nRan 25 tests across 1 file. [38.00ms]\n"
+      "outputHash": "c08f21d7cc4336fcca70beec2090b2f800975f974803fa56b7907adb2f8ba3f2",
+      "output": "bun test v1.3.14 (0d9b296a)\n\n 25 pass\n 0 fail\n 93 expect() calls\nRan 25 tests across 1 file. [34.00ms]\n"
     },
     {
       "cwd": "packages/canvas",
@@ -70,8 +70,8 @@
       "pass": 18,
       "fail": 0,
       "skip": 0,
-      "outputHash": "1f1a09bc6d6f07ccc6d2e59a6847336e15ec28c39f13026dab06b761fbefdfc6",
-      "output": "bun test v1.3.14 (0d9b296a)\n\n 18 pass\n 0 fail\n 66 expect() calls\nRan 18 tests across 2 files. [38.00ms]\n"
+      "outputHash": "99b4f1741d5af84f5c3382b37d6ffcc3305ecf5cc5e94927c97a595e3bb76ade",
+      "output": "bun test v1.3.14 (0d9b296a)\n\n 18 pass\n 0 fail\n 66 expect() calls\nRan 18 tests across 2 files. [41.00ms]\n"
     },
     {
       "cwd": "packages/compat",
@@ -97,8 +97,8 @@
       "pass": 8,
       "fail": 0,
       "skip": 1,
-      "outputHash": "830871abf4c50e5f514e3748b26aac4c4a14f914bbddef0c5461088b8b78569a",
-      "output": "bun test v1.3.14 (0d9b296a)\n\n 8 pass\n 1 skip\n 0 fail\n 8 expect() calls\nRan 9 tests across 1 file. [2.65s]\n"
+      "outputHash": "d7e5b3b0593955e6e0bd18e7fc5290c7745cd9492c17e202fbfe1cbb1c79db30",
+      "output": "bun test v1.3.14 (0d9b296a)\n\n 8 pass\n 1 skip\n 0 fail\n 8 expect() calls\nRan 9 tests across 1 file. [2.60s]\n"
     },
     {
       "cwd": "packages/domain",
@@ -137,8 +137,8 @@
       "pass": 13,
       "fail": 0,
       "skip": 0,
-      "outputHash": "7abdfed0cdcf7ee0b86c49c3e4c000e0d5512a13f017bf0173ec18c7b1cff9e1",
-      "output": "bun test v1.3.14 (0d9b296a)\n\n 13 pass\n 0 fail\n 43 expect() calls\nRan 13 tests across 1 file. [43.00ms]\n"
+      "outputHash": "9e8475e0146994823ce8c49d02c99f8055fca853f9a494fb9ef07c6a36d2c45c",
+      "output": "bun test v1.3.14 (0d9b296a)\n\n 13 pass\n 0 fail\n 43 expect() calls\nRan 13 tests across 1 file. [41.00ms]\n"
     },
     {
       "cwd": "packages/adapters-opencode",
@@ -161,11 +161,11 @@
         "test"
       ],
       "exitCode": 0,
-      "pass": 93,
+      "pass": 332,
       "fail": 0,
       "skip": 0,
-      "outputHash": "2af1147e253a47290d319aad77c7ce2d6d5088f58edb1b64ab7edb7f559bf27c",
-      "output": "bun test v1.3.14 (0d9b296a)\n[08:51:28.236] INFO (#5481): watcher backend {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-runtime-aSnDJO\",\n  platform: \"win32\",\n  backend: \"windows\",\n}\n[08:51:28.245] INFO (#5595): project copy refresh started {\n  projectID: \"global\",\n}\n[08:51:28.246] INFO (#5595): project copy refresh done {\n  projectID: \"global\",\n  updated: [],\n  removed: [],\n}\n[08:51:28.636] INFO (#5481): booting location services {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-runtime-aSnDJO\",\n  workspaceID: \"wrk_integrated\",\n}\n\ntest\\session-runtime.test.ts:\n\n 93 pass\n 0 fail\n 298 expect() calls\nRan 93 tests across 10 files. [6.23s]\n"
+      "outputHash": "ab1fd3ca6d3512d7009ca53f23aa9fa2f1ff18cdd2435253f6587d8ddd44a963",
+      "output": "bun test v1.3.14 (0d9b296a)\n[06:10:48.336] INFO (#135): watcher backend {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-application-PPyUeC\",\n  platform: \"win32\",\n  backend: \"windows\",\n}\n[06:10:48.345] INFO (#247): project copy refresh started {\n  projectID: \"global\",\n}\n[06:10:48.347] INFO (#247): project copy refresh done {\n  projectID: \"global\",\n  updated: [],\n  removed: [],\n}\n[06:10:48.387] INFO (#135): booting location services {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-application-PPyUeC\",\n  workspaceID: undefined,\n}\n[06:10:49.137] INFO (#1557): watcher backend {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-application-CXQVOB\",\n  platform: \"win32\",\n  backend: \"windows\",\n}\n[06:10:49.141] INFO (#1669): project copy refresh started {\n  projectID: \"global\",\n}\n[06:10:49.142] INFO (#1669): project copy refresh done {\n  projectID: \"global\",\n  updated: [],\n  removed: [],\n}\n[06:10:49.371] INFO (#1557): booting location services {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-application-CXQVOB\",\n  workspaceID: undefined,\n}\n[06:10:50.114] INFO (#3561): watcher backend {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-pending-child-e7phb1\",\n  platform: \"win32\",\n  backend: \"windows\",\n}\n[06:10:50.118] INFO (#3673): project copy refresh started {\n  projectID: \"global\",\n}\n[06:10:50.118] INFO (#3673): project copy refresh done {\n  projectID: \"global\",\n  updated: [],\n  removed: [],\n}\n[06:10:50.135] INFO (#3561): booting location services {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-pending-child-e7phb1\",\n  workspaceID: \"wrk_pending_child\",\n}\n[06:10:50.672] INFO (#4531): watcher backend {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-pending-child-mCK5be\",\n  platform: \"win32\",\n  backend: \"windows\",\n}\n[06:10:50.676] INFO (#4643): project copy refresh started {\n  projectID: \"global\",\n}\n[06:10:50.677] INFO (#4643): project copy refresh done {\n  projectID: \"global\",\n  updated: [],\n  removed: [],\n}\n[06:10:50.695] INFO (#4531): booting location services {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-pending-child-mCK5be\",\n  workspaceID: \"wrk_pending_child\",\n}\n[06:10:51.174] INFO (#5493): watcher backend {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-pending-child-2pOXp0\",\n  platform: \"win32\",\n  backend: \"windows\",\n}\n[06:10:51.178] INFO (#5605): project copy refresh started {\n  projectID: \"global\",\n}\n[06:10:51.179] INFO (#5605): project copy refresh done {\n  projectID: \"global\",\n  updated: [],\n  removed: [],\n}\n[06:10:51.362] INFO (#5493): booting location services {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-pending-child-2pOXp0\",\n  workspaceID: \"wrk_pending_child\",\n}\n[06:10:51.670] INFO (#6440): watcher backend {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-pending-child-9EhGYC\",\n  platform: \"win32\",\n  backend: \"windows\",\n}\n[06:10:51.675] INFO (#6552): project copy refresh started {\n  projectID: \"global\",\n}\n[06:10:51.676] INFO (#6552): project copy refresh done {\n  projectID: \"global\",\n  updated: [],\n  removed: [],\n}\n[06:10:51.692] INFO (#6440): booting location services {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-pending-child-9EhGYC\",\n  workspaceID: \"wrk_pending_child\",\n}\n[06:10:52.185] INFO (#7394): watcher backend {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-pending-child-Rmtclt\",\n  platform: \"win32\",\n  backend: \"windows\",\n}\n[06:10:52.189] INFO (#7506): project copy refresh started {\n  projectID: \"global\",\n}\n[06:10:52.189] INFO (#7506): project copy refresh done {\n  projectID: \"global\",\n  updated: [],\n  removed: [],\n}\n[06:10:52.206] INFO (#7394): booting location services {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-pending-child-Rmtclt\",\n  workspaceID: \"wrk_pending_child\",\n}\n[06:10:52.842] INFO (#9208): watcher backend {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-pending-child-EQLyKP\",\n  platform: \"win32\",\n  backend: \"windows\",\n}\n[06:10:52.846] INFO (#9320): project copy refresh started {\n  projectID: \"global\",\n}\n[06:10:52.847] INFO (#9320): project copy refresh done {\n  projectID: \"global\",\n  updated: [],\n  removed: [],\n}\n[06:10:52.863] INFO (#9208): booting location services {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-pending-child-EQLyKP\",\n  workspaceID: \"wrk_pending_child\",\n}\n[06:10:53.305] INFO (#10156): watcher backend {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-pending-child-bYMcVh\",\n  platform: \"win32\",\n  backend: \"windows\",\n}\n[06:10:53.309] INFO (#10268): project copy refresh started {\n  projectID: \"global\",\n}\n[06:10:53.309] INFO (#10268): project copy refresh done {\n  projectID: \"global\",\n  updated: [],\n  removed: [],\n}\n[06:10:53.325] INFO (#10156): booting location services {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-pending-child-bYMcVh\",\n  workspaceID: \"wrk_pending_child\",\n}\n[06:10:53.756] INFO (#11106): watcher backend {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-pending-child-eHKUFf\",\n  platform: \"win32\",\n  backend: \"windows\",\n}\n[06:10:53.760] INFO (#11218): project copy refresh started {\n  projectID: \"global\",\n}\n[06:10:53.760] INFO (#11218): project copy refresh done {\n  projectID: \"global\",\n  updated: [],\n  removed: [],\n}\n[06:10:53.777] INFO (#11106): booting location services {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-pending-child-eHKUFf\",\n  workspaceID: \"wrk_pending_child\",\n}\n[06:10:54.230] INFO (#12053): watcher backend {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-pending-child-47mNeR\",\n  platform: \"win32\",\n  backend: \"windows\",\n}\n[06:10:54.234] INFO (#12165): project copy refresh started {\n  projectID: \"global\",\n}\n[06:10:54.234] INFO (#12165): project copy refresh done {\n  projectID: \"global\",\n  updated: [],\n  removed: [],\n}\n[06:10:54.250] INFO (#12053): booting location services {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-pending-child-47mNeR\",\n  workspaceID: \"wrk_pending_child\",\n}\n[06:10:54.822] INFO (#13019): watcher backend {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-pending-child-1M146C\",\n  platform: \"win32\",\n  backend: \"windows\",\n}\n[06:10:54.829] INFO (#13131): project copy refresh started {\n  projectID: \"global\",\n}\n[06:10:54.830] INFO (#13131): project copy refresh done {\n  projectID: \"global\",\n  updated: [],\n  removed: [],\n}\n[06:10:54.885] INFO (#13019): booting location services {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-pending-child-1M146C\",\n  workspaceID: \"wrk_pending_child\",\n}\n[06:10:56.712] INFO (#16187): watcher backend {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\input-compatibility-R08Nne\",\n  platform: \"win32\",\n  backend: \"windows\",\n}\n[06:10:56.716] INFO (#16299): project copy refresh started {\n  projectID: \"global\",\n}\n[06:10:56.717] INFO (#16299): project copy refresh done {\n  projectID: \"global\",\n  updated: [],\n  removed: [],\n}\n[06:10:56.745] INFO (#16187): booting location services {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\input-compatibility-R08Nne\",\n  workspaceID: \"wrk_input\",\n}\n[06:11:00.372] INFO (#23598): watcher backend {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-native-http-M4yw17\\\\project\",\n  platform: \"win32\",\n  backend: \"windows\",\n}\n[06:11:00.379] INFO (#23710): project copy refresh started {\n  projectID: \"global\",\n}\n[06:11:00.380] INFO (#23710): project copy refresh done {\n  projectID: \"global\",\n  updated: [],\n  removed: [],\n}\n[06:11:00.780] INFO (#23598): booting location services {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-native-http-M4yw17\\\\project\",\n  workspaceID: undefined,\n}\n[06:11:08.206] INFO (#40931): watcher backend {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-session-http-QZKUoi\\\\a\",\n  platform: \"win32\",\n  backend: \"windows\",\n}\n[06:11:08.215] INFO (#41043): project copy refresh started {\n  projectID: \"global\",\n}\n[06:11:08.216] INFO (#41043): project copy refresh done {\n  projectID: \"global\",\n  updated: [],\n  removed: [],\n}\n[06:11:08.250] INFO (#40931): booting location services {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-session-http-QZKUoi\\\\a\",\n  workspaceID: \"wrk_http_a\",\n}\n[06:11:08.782] INFO (#41894): watcher backend {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-session-http-lSqQdj\\\\a\",\n  platform: \"win32\",\n  backend: \"windows\",\n}\n[06:11:08.786] INFO (#42006): project copy refresh started {\n  projectID: \"global\",\n}\n[06:11:08.786] INFO (#42006): project copy refresh done {\n  projectID: \"global\",\n  updated: [],\n  removed: [],\n}\n[06:11:08.802] INFO (#41894): booting location services {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-session-http-lSqQdj\\\\a\",\n  workspaceID: \"wrk_http_a\",\n}\n[06:11:09.234] INFO (#42846): watcher backend {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-session-http-uv18Zt\\\\a\",\n  platform: \"win32\",\n  backend: \"windows\",\n}\n[06:11:09.239] INFO (#42958): project copy refresh started {\n  projectID: \"global\",\n}\n[06:11:09.239] INFO (#42958): project copy refresh done {\n  projectID: \"global\",\n  updated: [],\n  removed: [],\n}\n[06:11:09.257] INFO (#42846): booting location services {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-session-http-uv18Zt\\\\a\",\n  workspaceID: \"wrk_http_a\",\n}\n[06:11:10.060] INFO (#43794): watcher backend {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-runtime-S4sTgK\",\n  platform: \"win32\",\n  backend: \"windows\",\n}\n[06:11:10.065] INFO (#43906): project copy refresh started {\n  projectID: \"global\",\n}\n[06:11:10.066] INFO (#43906): project copy refresh done {\n  projectID: \"global\",\n  updated: [],\n  removed: [],\n}\n[06:11:10.092] INFO (#43794): booting location services {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-runtime-S4sTgK\",\n  workspaceID: \"wrk_integrated\",\n}\n[06:11:10.612] INFO (#44736): watcher backend {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-runtime-JmuOb1\\\\a\",\n  platform: \"win32\",\n  backend: \"windows\",\n}\n[06:11:10.615] INFO (#44848): project copy refresh started {\n  projectID: \"global\",\n}\n[06:11:10.615] INFO (#44848): project copy refresh done {\n  projectID: \"global\",\n  updated: [],\n  removed: [],\n}\n[06:11:10.632] INFO (#44736): booting location services {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-runtime-JmuOb1\\\\a\",\n  workspaceID: \"wrk_runtime_a\",\n}\n[06:11:10.995] INFO (#44955): watcher backend {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-runtime-JmuOb1\\\\b\",\n  platform: \"win32\",\n  backend: \"windows\",\n}\n[06:11:10.998] INFO (#45066): project copy refresh started {\n  projectID: \"global\",\n}\n[06:11:10.999] INFO (#45066): project copy refresh done {\n  projectID: \"global\",\n  updated: [],\n  removed: [],\n}\n[06:11:11.309] INFO (#44955): booting location services {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-runtime-JmuOb1\\\\b\",\n  workspaceID: \"wrk_runtime_b\",\n}\n[06:11:11.450] INFO (#46333): watcher backend {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-runtime-RbtjIk\\\\a\",\n  platform: \"win32\",\n  backend: \"windows\",\n}\n[06:11:11.454] INFO (#46445): project copy refresh started {\n  projectID: \"global\",\n}\n[06:11:11.454] INFO (#46445): project copy refresh done {\n  projectID: \"global\",\n  updated: [],\n  removed: [],\n}\n[06:11:11.470] INFO (#46333): booting location services {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-runtime-RbtjIk\\\\a\",\n  workspaceID: \"wrk_concurrent_a\",\n}\n[06:11:11.852] INFO (#46552): watcher backend {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-runtime-RbtjIk\\\\b\",\n  platform: \"win32\",\n  backend: \"windows\",\n}\n[06:11:11.855] INFO (#46663): project copy refresh started {\n  projectID: \"global\",\n}\n[06:11:11.856] INFO (#46663): project copy refresh done {\n  projectID: \"global\",\n  updated: [],\n  removed: [],\n}\n[06:11:12.179] INFO (#46552): booting location services {\n  directory: \"C:\\\\Users\\\\zhiji\\\\AppData\\\\Local\\\\Temp\\\\cybermastery-runtime-RbtjIk\\\\b\",\n  workspaceID: \"wrk_concurrent_b\",\n}\n\ntest\\application.test.ts:\n\ntest\\child-runner.test.ts:\n\ntest\\input-compatibility.test.ts:\n\ntest\\native-http.test.ts:\n\ntest\\session-http.test.ts:\n\ntest\\session-runtime.test.ts:\n\n 332 pass\n 0 fail\n 2655 expect() calls\nRan 332 tests across 26 files. [26.10s]\n"
     },
     {
       "cwd": "apps/host",
@@ -191,8 +191,8 @@
       "pass": 2,
       "fail": 0,
       "skip": 0,
-      "outputHash": "2a64f78578552f59267d2ad06e67a2aa44d2c964617c7f6e5d536108413088b3",
-      "output": "bun test v1.3.14 (0d9b296a)\n\n 2 pass\n 0 fail\n 10 expect() calls\nRan 2 tests across 1 file. [1074.00ms]\n"
+      "outputHash": "0a995bf421d19e6b170652fe1fe127aff1e7ea1fdf6b68940873a1fee55ea940",
+      "output": "bun test v1.3.14 (0d9b296a)\n\n 2 pass\n 0 fail\n 10 expect() calls\nRan 2 tests across 1 file. [1.58s]\n"
     },
     {
       "cwd": "apps/web",
@@ -218,8 +218,8 @@
       "pass": 0,
       "fail": 0,
       "skip": 0,
-      "outputHash": "95274f88c82381ad43884ddd3047da9fe35883c3ca74a0c76d20651bd7f25e68",
-      "output": "vite v7.1.4 building for production...\ntransforming...\n✓ 12 modules transformed.\nrendering chunks...\ncomputing gzip size...\ndist/index.html                  0.38 kB │ gzip:  0.27 kB\ndist/assets/index-nnPvlgzt.css   3.41 kB │ gzip:  1.11 kB\ndist/assets/index-BVMgu9h7.js   33.66 kB │ gzip: 11.79 kB\n✓ built in 418ms\n$ vite build --configLoader runner\n"
+      "outputHash": "a062b958e24933eed9179c163598b652f915d58b82d3832d45d93903320639ab",
+      "output": "vite v7.1.4 building for production...\ntransforming...\n✓ 12 modules transformed.\nrendering chunks...\ncomputing gzip size...\ndist/index.html                  0.38 kB │ gzip:  0.27 kB\ndist/assets/index-nnPvlgzt.css   3.41 kB │ gzip:  1.11 kB\ndist/assets/index-BVMgu9h7.js   33.66 kB │ gzip: 11.79 kB\n✓ built in 411ms\n$ vite build --configLoader runner\n"
     },
     {
       "cwd": "apps/web",
@@ -232,8 +232,8 @@
       "pass": 1,
       "fail": 0,
       "skip": 0,
-      "outputHash": "2063ad53ceef1d7afad4ca9eee00cfd571380be88a380d56458a823aeec0e827",
-      "output": "bun test v1.3.14 (0d9b296a)\n$ bun test test --timeout 30000\n\n 1 pass\n 0 fail\n 1 expect() calls\nRan 1 test across 1 file. [3.09s]\n"
+      "outputHash": "b6758c13cbb79dfe3546ca45c3284795405057b82101d185c936234149748d3f",
+      "output": "bun test v1.3.14 (0d9b296a)\n$ bun test test --timeout 30000\n\n 1 pass\n 0 fail\n 1 expect() calls\nRan 1 test across 1 file. [3.41s]\n"
     }
   ]
 }

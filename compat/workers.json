@@ -1,11 +1,25 @@
 {
-  "provider": "opencode-go",
-  "model": "deepseek-v4.1-flash",
-  "requestedEffort": "ExtraHigh",
-  "advertisedVariants": ["low", "high", "max"],
-  "actualVariant": "max",
+  "version": 3,
+  "currentPolicy": {
+    "provider": "opencode-go",
+    "model": "deepseek-v4.1-flash",
+    "variant": "high",
+    "reasoningEffort": "high",
+    "agent": "harness-worker (explicit CLI model and variant overrides)",
+    "parallelism": "Independent tasks only, normally two concurrent coding workers; master integrates and validates after the barrier.",
+    "plan": "compat/PARALLEL_IMPLEMENTATION_PLAN.md"
+  },
+  "historicalPolicy": {
+    "waves": [1, 2, 3],
+    "provider": "opencode-go",
+    "model": "deepseek-v4.1-flash",
+    "requestedEffort": "ExtraHigh",
+    "advertisedVariants": ["low", "high", "max"],
+    "actualVariant": "max",
+    "defaultResponseCapIssue": "Two first-wave workers exhausted 32000 reasoning tokens before producing code; resumed at 65536 output cap without changing model or effort."
+  },
+  "intermediatePolicy": {"waves": [4, 5, 6, 7, 8, 9], "provider": "openai", "model": "gpt-6-astra", "variant": "high", "laterWaveSessions": "compat/COMPLETION_WORKLOG.md"},
   "dispatch": "fresh OpenCode CLI worker sessions with self-contained briefs and disjoint file ownership",
-  "defaultResponseCapIssue": "Two first-wave workers exhausted 32000 reasoning tokens before producing code; resumed at 65536 output cap without changing model or effort.",
   "workers": [
     {"task": "contracts", "wave": 1, "result": "implemented; reviewed and validated"},
     {"task": "canvas", "wave": 1, "result": "implemented after response-cap retry; master corrected tests; unavailable read attempts returned no source"},
@@ -13,8 +27,72 @@
     {"task": "client", "wave": 2, "result": "implemented; master corrected fetch typing and stream cleanup"},
     {"task": "web", "wave": 2, "result": "implemented; master added stale-response edit guards and validated real browsers"},
     {"task": "checkpoint", "wave": 3, "result": "implemented; exact canonical format reviewed and validated"},
-    {"task": "history", "wave": 3, "result": "implemented; master corrected tool input access, exact hash matching and schema fixtures, and replaced speculative fixture probing with the real checkpoint constructor"}
+    {"task": "history", "wave": 3, "result": "implemented; master corrected tool input access, exact hash matching and schema fixtures, and replaced speculative fixture probing with the real checkpoint constructor"},
+    {
+      "task": "runner-conformance",
+      "wave": 4,
+      "sessionID": "ses_f3253e9a8ffeYaX60hC6MXa7SV",
+      "model": "openai/gpt-6-astra",
+      "variant": "high",
+      "createdAtEpochMs": 1790157002327,
+      "completedAtEpochMs": 1790157348998,
+      "tools": {"apply_patch": 6, "todowrite": 4},
+      "filesEdited": ["modular/packages/adapters-opencode/src/runner.ts", "modular/packages/adapters-opencode/test/runner.test.ts"],
+      "result": "implemented within ownership; master added deterministic failure-order and fragment-flush coverage and fixed the newly exposed tool-registration cancellation race"
+    },
+    {
+      "task": "session-runtime-isolation",
+      "wave": 4,
+      "sessionID": "ses_f3253e9d5ffeZycoCxKLPjyyC3",
+      "model": "openai/gpt-6-astra",
+      "variant": "high",
+      "createdAtEpochMs": 1790157002283,
+      "completedAtEpochMs": 1790157314359,
+      "tools": {"apply_patch": 4, "todowrite": 4},
+      "filesEdited": ["modular/packages/adapters-opencode/test/session-runtime.test.ts"],
+      "result": "implemented within ownership; master corrected the brief's Workspace ID branding, strengthened assertions and supplied interruption-safe native coordinator composition after the tests exposed a pinned Deferred fan-out defect"
+    },
+    {
+      "task": "fresh-session-classification",
+      "wave": 10,
+      "sessionID": "ses_f2e044a41ffewgUYK9RoYS6w89",
+      "model": "opencode-go/deepseek-v4.1-flash",
+      "variant": "high",
+      "filesEdited": ["modular/packages/adapters-opencode/src/session-classification.ts", "modular/packages/adapters-opencode/src/session-facade.ts", "modular/packages/adapters-opencode/test/session-classification.test.ts"],
+      "result": "implemented within file ownership using available write/edit tools; one no-op edit rejected; master corrected SQL error typing and test schema assertions, then verified"
+    },
+    {
+      "task": "child-runner-api",
+      "wave": 10,
+      "sessionID": "ses_f2e0449c8ffeSdcfpqR7cU2rq1",
+      "model": "opencode-go/deepseek-v4.1-flash",
+      "variant": "high",
+      "filesEdited": ["modular/packages/adapters-opencode/src/child-runner.ts", "modular/packages/adapters-opencode/test/child-runner.test.ts"],
+      "result": "implemented within file ownership using available write/edit tools; unavailable tool requests returned no source; master fixed Effect/Provider APIs, exposed native Project service, removed swallowed creation conflicts, hardened cancellation mapping and added transaction-revocation and legacy/mixed tests"
+    }
   ],
-  "masterOwned": ["manifests", "native pin and source integrity", "baseline capture", "package installation", "domain and persistence", "admission facade", "HTTP composition", "Event-service mediation", "private projection restore", "provider and compaction adapters", "integration verification", "release gate decisions"],
+  "wave4Audit": {
+    "manifest": ".opencode/parallel/native-parity-wave-4/MANIFEST.md",
+    "modelVerification": "opencode export: user info.model.variant=high and every assistant message uses openai/gpt-6-astra",
+    "toolAndOwnershipVerification": "Exported tool records contain only apply_patch and todowrite, completed successfully, with file paths inside each exclusive ownership list.",
+    "workerCommandsOrExploration": false,
+    "responseTokenCap": 65536,
+    "overlappingWorkerIntervalMs": 312032,
+    "parallelWorkerWindowMs": 346715,
+    "timingScope": "Observed worker sessions only; excludes master briefing, integration and verification; not an overall speedup estimate.",
+    "verification": "Historical wave-4 proof: 192 pass, 1 skip, 0 fail; eight package/app typechecks, build and browser smoke passed. Current verification.json has advanced."
+  },
+  "wave10Audit": {
+    "manifest": ".opencode/parallel/completion-wave-10/MANIFEST.md",
+    "modelVerification": "Both successful session exports contain only assistant model opencode-go/deepseek-v4.1-flash with variant high.",
+    "maxAttempts": [
+      {"sessionID": "ses_f2e0db000ffeVYqUGnIM6ieuQN", "task": "classification", "variant": "max", "reason": "length", "reasoningTokens": 65536, "outputTokens": 0, "edits": 0},
+      {"sessionID": "ses_f2e0dafb7ffeF6slarDZ6iVfQX", "task": "child", "variant": "max", "reason": "length", "reasoningTokens": 65536, "outputTokens": 0, "edits": 0}
+    ],
+    "ownershipVerification": "Successful file operations in exported sessions touch only each worker's listed owned paths. No commands or successful exploration occurred. Available CLI tools were write/edit rather than the requested apply_patch; child attempted unavailable tools and those calls yielded no source.",
+    "responseTokenCap": 65536,
+    "verification": "2026-09-24T06:11:30.184Z: 399 pass, 1 POSIX-only skip, 0 fail; eight typechecks, frontend build, browser smoke and unchanged native source attestation."
+  },
+  "masterOwned": ["manifests", "native pin and source integrity", "baseline capture", "package installation", "domain and persistence", "admission facade", "HTTP composition", "Event-service mediation", "private projection restore", "provider and compaction adapters", "interruption-safe execution composition", "integration verification", "release gate decisions"],
   "nativeSourceEditsByWorkers": false
 }

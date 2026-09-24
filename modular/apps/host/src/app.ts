@@ -1,4 +1,3 @@
-import { createLayoutRepository } from "@cybermastery/adapters-opencode/layout"
 import { capabilities, requireFullParity } from "@cybermastery/adapters-opencode/capabilities"
 import { createLayoutService, LayoutError } from "@cybermastery/domain/layout"
 import { InvalidLayoutCommand } from "@cybermastery/contracts/layout"
@@ -11,22 +10,28 @@ export async function createApplication(options: {
   readonly workspaceID: string
   readonly userID: string
   readonly token: string
+  readonly directory?: string
   readonly staticDirectory?: string
 }) {
   if (options.mode === "full") requireFullParity()
   if (!options.token.trim()) throw new Error("An explicit authentication token is required")
-  const storage = await createLayoutRepository({
+  const { createApplicationAdapter } = await import("@cybermastery/adapters-opencode/application")
+  const storage = await createApplicationAdapter({
     filename: options.filename,
     workspaceID: options.workspaceID,
-    ownerID: options.userID,
+    userID: options.userID,
+    token: options.token,
+    directory: options.directory,
+    isolated: options.mode === "proof",
   })
   const layouts = createLayoutService(storage.repository, new Map([["proof:static-card", { minW: 120, minH: 80 }]]))
   const streams = new Set<() => Promise<void>>()
-  const actor = { userID: options.userID }
+  const lifecycle: { disposal?: Promise<void> } = {}
   const encoder = new TextEncoder()
 
   const fetch = async (request: Request): Promise<Response> => {
     const url = new URL(request.url)
+    if (url.pathname === "/openapi.json") return storage.fetch(request)
     if (!url.pathname.startsWith("/api/")) {
       if (!options.staticDirectory) return Response.json({ mode: "proof", status: "ready" })
       const base = resolve(options.staticDirectory)
@@ -35,17 +40,18 @@ export async function createApplication(options: {
       const file = Bun.file(filename)
       return (await file.exists()) ? new Response(file) : new Response(null, { status: 404 })
     }
-    if (request.headers.get("authorization") !== `Bearer ${options.token}`) return Response.json({ code: "unauthorized" }, { status: 401 })
+    const actor = storage.authenticate(request)
+    if (!actor) return Response.json({ code: "unauthorized" }, { status: 401 })
     if (url.pathname === "/api/cybermastery/capabilities") return Response.json({ mode: options.mode, capabilities })
     if (url.searchParams.get("workspaceID") && url.searchParams.get("workspaceID") !== options.workspaceID) {
       return Response.json({ code: "forbidden" }, { status: 403 })
     }
     if (url.pathname === routes.events.path && request.method === routes.events.method) {
-      const state = {
-        closed: false,
-        unsubscribe: undefined as undefined | Promise<() => Promise<void>>,
-        closing: undefined as undefined | Promise<void>,
-      }
+      const state: {
+        closed: boolean
+        unsubscribe?: Promise<() => Promise<void>>
+        closing?: Promise<void>
+      } = { closed: false }
       const close = () => {
         if (state.closing) return state.closing
         state.closed = true
@@ -72,6 +78,7 @@ export async function createApplication(options: {
       })
       return new Response(stream, { headers: { "content-type": "text/event-stream", "cache-control": "no-cache" } })
     }
+    if (url.pathname !== routes.layout.path && url.pathname !== routes.events.path) return storage.fetch(request)
     const operation = async () => {
       if (url.pathname !== routes.layout.path) return new Response(null, { status: 404 })
       if (request.method === routes.layout.method) {
@@ -93,9 +100,9 @@ export async function createApplication(options: {
 
   return {
     fetch,
-    async dispose() {
-      await Promise.all([...streams].map((close) => close()))
-      await storage.dispose()
+    dispose() {
+      lifecycle.disposal ??= Promise.all([...streams].map((close) => close())).then(() => undefined).finally(() => storage.dispose())
+      return lifecycle.disposal
     },
   }
 }

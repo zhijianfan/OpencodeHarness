@@ -8,6 +8,7 @@ import { SessionEvent } from "@opencode-ai/schema/session-event"
 import { Effect, Option, Schema } from "effect"
 import { sql } from "drizzle-orm"
 import { EventBoundary } from "./event-boundary"
+import { decodeLegacyContext, legacyReferenceHash, type LegacyJsonObject } from "./legacy-context"
 
 export type AdmissionRequest = {
   readonly sessionID: SessionSchema.ID
@@ -23,9 +24,16 @@ export class AdmissionError extends Schema.TaggedErrorClass<AdmissionError>()("C
   code: Schema.Literals(["unauthorized", "conflict", "missing-private-context", "invalid-snapshot"]),
 }) {}
 
+export type FrozenInput = {
+  readonly apiContent: string
+  readonly rendererVersion: number
+  /** Complete original private producer snapshot, not raw request attachments. */
+  readonly context?: LegacyJsonObject
+}
+
 export type AdmissionPolicy = {
   readonly authorize: (request: AdmissionRequest) => Effect.Effect<void, AdmissionError>
-  readonly freeze: (request: AdmissionRequest) => Effect.Effect<{ readonly apiContent: string; readonly rendererVersion: number }, AdmissionError>
+  readonly freeze: (request: AdmissionRequest) => Effect.Effect<FrozenInput, AdmissionError>
 }
 
 type Stored = {
@@ -36,6 +44,18 @@ type Stored = {
 }
 
 const digest = (value: string) => createHash("sha256").update(value).digest("hex")
+
+/** Validate and detach the private producer's snapshot before entering admission. */
+export function validateFrozenInput(request: AdmissionRequest, snapshot: FrozenInput): FrozenInput {
+  if (snapshot.rendererVersion !== 1 && snapshot.rendererVersion !== 2)
+    throw new AdmissionError({ code: "invalid-snapshot" })
+  if (snapshot.context === undefined) return { apiContent: snapshot.apiContent, rendererVersion: snapshot.rendererVersion }
+  const context = decodeLegacyContext(snapshot.context, request.text)
+  if (context.apiContent !== snapshot.apiContent || context.apiContentHash !== digest(snapshot.apiContent) ||
+    context.rendererVersion !== snapshot.rendererVersion || context.contextRequestHash !== legacyReferenceHash(request.references))
+    throw new AdmissionError({ code: "invalid-snapshot" })
+  return { apiContent: context.apiContent, rendererVersion: context.rendererVersion, context: context.snapshot }
+}
 
 export const privateRequestIdentity = (request: AdmissionRequest) => digest(JSON.stringify({
   sessionID: request.sessionID,
@@ -49,6 +69,9 @@ export const privateRequestIdentity = (request: AdmissionRequest) => digest(JSON
  * Explicit external admission facade around the native helper. This does not
  * intercept stock SessionV2.prompt or provide native provider reconstruction;
  * the production gate must remain closed until those integrations are proven.
+ * This low-level proof path retains its original table dependencies. Full
+ * snapshot persistence and compatibility metadata belong to the managed
+ * native Session facade, not this standalone proof helper.
  */
 export const admit = Effect.fn("CyberMastery.admit")(function* (
   request: AdmissionRequest,
@@ -79,7 +102,7 @@ export const admit = Effect.fn("CyberMastery.admit")(function* (
     return existing
   }
   const snapshot = yield* policy.freeze(request)
-  if (!Number.isSafeInteger(snapshot.rendererVersion) || snapshot.rendererVersion < 1) {
+  if (snapshot.rendererVersion !== 1 && snapshot.rendererVersion !== 2) {
     return yield* new AdmissionError({ code: "invalid-snapshot" })
   }
   const delegated: EventV2.Interface = {

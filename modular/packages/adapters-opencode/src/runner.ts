@@ -62,6 +62,13 @@ export const makePrivateRunner = Effect.fn("CyberMastery.makePrivateRunner")(fun
     deps.system.load(), deps.skills.load(agent), deps.references.load(),
   ], { concurrency: "unbounded" }).pipe(Effect.map(SystemContext.combine))
 
+  const requireLocalSession = Effect.fn("CyberMastery.requireLocalSession")(function* (sessionID: Session.ID) {
+    const session = yield* deps.store.get(sessionID)
+    if (!session) return yield* Effect.die(`Session not found: ${sessionID}`)
+    if (session.location.directory !== deps.location.directory || session.location.workspaceID !== deps.location.workspaceID) return yield* Effect.interrupt
+    return session
+  })
+
   const repairInterruptedTools = Effect.fn("CyberMastery.repairInterruptedTools")(function* (sessionID: Session.ID) {
     for (const message of yield* deps.store.context(sessionID)) {
       if (message.type !== "assistant") continue
@@ -77,9 +84,7 @@ export const makePrivateRunner = Effect.fn("CyberMastery.makePrivateRunner")(fun
   })
 
   const attempt = Effect.fn("CyberMastery.providerAttempt")(function* (sessionID: Session.ID, step: number, recoverOverflow: boolean, promotion?: "steer" | "queue") {
-    const session = yield* deps.store.get(sessionID)
-    if (!session) return yield* Effect.die(`Session not found: ${sessionID}`)
-    if (session.location.directory !== deps.location.directory || session.location.workspaceID !== deps.location.workspaceID) return yield* Effect.interrupt
+    const session = yield* requireLocalSession(sessionID)
     const agent = yield* deps.agents.select(session.agent)
     const initialized = yield* SessionContextEpoch.initialize(db, loadSystem(agent), sessionID)
     const cutoff = promotion ? yield* EventV2.latestSequence(db, sessionID) : -1
@@ -127,9 +132,13 @@ export const makePrivateRunner = Effect.fn("CyberMastery.makePrivateRunner")(fun
       if (!tools) return yield* publication(publisher.failUnsettledTools("Tools are disabled after the maximum agent steps"))
       state.continuation = true
       const assistantMessageID = yield* publisher.assistantMessageID(event.id)
-      yield* Effect.uninterruptibleMask((restore) => restore(tools.settle({ sessionID, agent: agent.id, assistantMessageID, call: event })).pipe(
-        Effect.flatMap((settlement) => publish(LLMEvent.toolResult({ id: event.id, name: event.name, result: settlement.result, output: settlement.output }), settlement.outputPaths ?? [])),
-      )).pipe(FiberSet.run(jobs))
+      // The pinned FiberSet starts a child synchronously before registering it.
+      // Yield first so reentrant cancellation cannot miss a started tool.
+      yield* Effect.yieldNow.pipe(Effect.andThen(
+        Effect.uninterruptibleMask((restore) => restore(tools.settle({ sessionID, agent: agent.id, assistantMessageID, call: event })).pipe(
+          Effect.flatMap((settlement) => publish(LLMEvent.toolResult({ id: event.id, name: event.name, result: settlement.result, output: settlement.output }), settlement.outputPaths ?? [])),
+        )),
+      ), FiberSet.run(jobs))
     })), Effect.ensuring(publication(publisher.flush())))
 
     return yield* Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
@@ -155,16 +164,16 @@ export const makePrivateRunner = Effect.fn("CyberMastery.makePrivateRunner")(fun
         yield* publication(publisher.failUnsettledTools("Tool execution interrupted"))
         return yield* Effect.interrupt
       }
-      if (!Cause.hasInterrupts(settled.cause)) {
-        const cause = Cause.squash(settled.cause)
-        yield* publication(publisher.failUnsettledTools(`Tool execution failed: ${cause instanceof Error ? cause.message : String(cause)}`))
-      }
     }
     const interrupted = (streamed._tag === "Failure" && Cause.hasInterrupts(streamed.cause)) || (settled._tag === "Failure" && Cause.hasInterrupts(settled.cause))
     if (interrupted) {
       yield* FiberSet.clear(jobs)
       yield* publication(publisher.failUnsettledTools("Tool execution interrupted"))
       if (publisher.hasActiveAssistant()) yield* publication(publisher.failAssistant("Provider turn interrupted"))
+    }
+    if (settled._tag === "Failure" && !Cause.hasInterrupts(settled.cause)) {
+      const cause = Cause.squash(settled.cause)
+      yield* publication(publisher.failUnsettledTools(`Tool execution failed: ${cause instanceof Error ? cause.message : String(cause)}`))
     }
     const stepResult = publisher.stepSettlement()
     if (stepResult && !publisher.hasProviderError()) {
@@ -191,6 +200,9 @@ export const makePrivateRunner = Effect.fn("CyberMastery.makePrivateRunner")(fun
     })
     const initial = yield* pending()
     if (!input.force && !initial) return
+    // Idle advisory runs stay no-ops; active drains must validate placement
+    // before even repairing history left by an earlier owner.
+    yield* requireLocalSession(input.sessionID)
     yield* repairInterruptedTools(input.sessionID)
     const state: { promotion?: "steer" | "queue"; step: number; recover: boolean } = { promotion: initial, step: 1, recover: true }
     for (;;) {

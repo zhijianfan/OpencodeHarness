@@ -16,6 +16,8 @@ const links = {
   "@opencode-ai/core": core,
   "@opencode-ai/schema": join(upstream, "packages/schema"),
   "@opencode-ai/llm": join(upstream, "packages/llm"),
+  "@opencode-ai/protocol": join(upstream, "packages/protocol"),
+  "@opencode-ai/server": join(upstream, "packages/server"),
   effect: resolve(dirname(Bun.resolveSync("effect", core)), ".."),
   "drizzle-orm": dirname(Bun.resolveSync("drizzle-orm", core)),
 }

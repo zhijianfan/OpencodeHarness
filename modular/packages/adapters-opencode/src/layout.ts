@@ -26,6 +26,20 @@ export async function createLayoutRepository(input: {
   readonly ownerID: string
 }) {
   const runtime = createMediatedKernel(input.filename)
+  const storage = await bindLayoutRepository({ ...input, runtime }).catch(async (error: unknown) => {
+    await runtime.dispose()
+    throw error
+  })
+  return { ...storage, dispose: () => runtime.dispose() }
+}
+
+/** Borrow the host's existing graph rather than creating another database/Event service. */
+export async function bindLayoutRepository(input: {
+  readonly runtime: Pick<ReturnType<typeof createMediatedKernel>, "runPromise">
+  readonly workspaceID: string
+  readonly ownerID: string
+}) {
+  const runtime = input.runtime
   const database = await runtime.runPromise(Database.Service)
   const events = await runtime.runPromise(EventV2.Service)
   const db = database.db
@@ -43,10 +57,7 @@ export async function createLayoutRepository(input: {
     )`)
     yield* db.run(sql`INSERT OR IGNORE INTO cm_migration (id, completed_at) VALUES ('0002-layout-proof', ${Date.now()})`)
     yield* db.run(sql`INSERT OR IGNORE INTO cm_workspace (id, owner_id) VALUES (${input.workspaceID}, ${input.ownerID})`)
-  }))).catch(async (error: unknown) => {
-    await runtime.dispose()
-    throw error
-  })
+  })))
 
   const authorize = (actor: Actor, workspaceID: string, tuple: LayoutTuple) => Effect.gen(function* () {
     if (actor.userID !== tuple.user) return yield* Effect.fail(new LayoutError("forbidden"))
@@ -99,6 +110,5 @@ export async function createLayoutRepository(input: {
         const properties = Schema.decodeUnknownSync(LayoutUpdated.data)(event.data)
         return Effect.sync(() => handler({ type: event.type, properties }))
       })).then((unsubscribe) => () => runtime.runPromise(unsubscribe)),
-    dispose: () => runtime.dispose(),
   }
 }

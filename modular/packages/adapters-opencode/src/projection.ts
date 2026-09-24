@@ -18,7 +18,7 @@ const InputRecord = Schema.Struct({
   requestHash: Schema.String,
   apiContent: Schema.String,
   apiContentHash: Schema.String,
-  rendererVersion: Schema.Literal(1),
+  rendererVersion: Schema.Literals([1, 2]),
 })
 const CheckpointRecord = Schema.Struct({
   messageID: SessionMessage.ID,

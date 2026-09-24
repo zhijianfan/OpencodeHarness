@@ -7,6 +7,7 @@ import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { Effect, ManagedRuntime } from "effect"
 import { sql } from "drizzle-orm"
 import { makeEventBoundaryNode, makeMediatedEventNode } from "./event-boundary"
+import { initializeLegacyProjection } from "./legacy-projection"
 
 /** A proof kernel, not a production Session/HTTP host. All native modules are official source packages. */
 export function createKernel(filename: string) {
@@ -68,4 +69,5 @@ export const initializeExtension = Effect.gen(function* () {
         VALUES ('0003-private-context-records', ${Date.now()})`)
     }),
   )
+  yield* initializeLegacyProjection
 })

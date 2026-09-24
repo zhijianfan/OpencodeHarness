@@ -6,7 +6,8 @@
     "./layout": "./src/layout.ts",
     "./capabilities": "./src/capabilities.ts",
     "./session-runtime": "./src/session-runtime.ts",
-    "./session-context": "./src/session-facade.ts"
+    "./session-context": "./src/session-facade.ts",
+    "./application": "./src/application.ts"
   },
   "dependencies": {
     "@cybermastery/contracts": "workspace:*",
@@ -16,6 +17,8 @@
     "@opencode-ai/core": "packages/core",
     "@opencode-ai/schema": "packages/schema",
     "@opencode-ai/llm": "packages/llm",
+    "@opencode-ai/protocol": "packages/protocol",
+    "@opencode-ai/server": "packages/server",
     "effect": "resolved from native Core",
     "drizzle-orm": "resolved from native Core"
   },

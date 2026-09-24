@@ -12,17 +12,21 @@ import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { SessionSchema } from "@opencode-ai/core/session/schema"
 import { SessionMessage } from "@opencode-ai/schema/session-message"
 import { SessionEvent } from "@opencode-ai/schema/session-event"
-import { Context, Effect, Layer, Option } from "effect"
+import { Context, Effect, Layer, Option, Schema } from "effect"
 import { sql } from "drizzle-orm"
-import { AdmissionError, privateRequestIdentity, type AdmissionPolicy, type AdmissionRequest } from "./admission"
+import { AdmissionError, privateRequestIdentity, validateFrozenInput, type AdmissionPolicy, type AdmissionRequest, type FrozenInput } from "./admission"
 import { EventBoundary, EventReplayScope, type makeEventBoundaryNode } from "./event-boundary"
 import { PrivateRestoreContext } from "./restore-context"
+import { decodeLegacyContext, legacyCanonical, legacyReferenceHash } from "./legacy-context"
+import { interactiveContextBudget, renderContextSnapshot } from "./context-renderer"
+import { recordLegacyInputEvent } from "./legacy-projection"
+import { recordV2SessionCreated } from "./session-classification"
 
 export type PrivatePromptRequest = Pick<AdmissionRequest, "actor" | "references">
 export class PrivatePromptContext extends Context.Service<PrivatePromptContext, PrivatePromptRequest>()("@cybermastery/PrivatePromptContext") {}
 class PreparedInput extends Context.Service<PreparedInput, {
   readonly request: AdmissionRequest
-  readonly snapshot: { readonly apiContent: string; readonly rendererVersion: number }
+  readonly snapshot: FrozenInput
 }>()("@cybermastery/PreparedPrivateInput") {}
 
 export type SessionAdmissionPolicy = AdmissionPolicy & {
@@ -30,13 +34,20 @@ export type SessionAdmissionPolicy = AdmissionPolicy & {
   readonly managed: (session: SessionSchema.Info) => Effect.Effect<boolean>
 }
 
+export type SessionPolicy = SessionAdmissionPolicy | ((dependencies: {
+  readonly database: Effect.Success<typeof Database.Service>
+  readonly session: SessionV2.Interface
+}) => SessionAdmissionPolicy)
+
 type NativeRequirements = Database.Service | EventV2.Service | ProjectV2.Service | SessionExecution.Service | SessionStore.Service | LocationServiceMap.Service
 
 /**
- * Explicit Session service decoration. The native constructor and every method
- * except prompt are delegated; MIME normalization and retry reconciliation stay native.
+ * Explicit Session service decoration. The native constructor is delegated; the
+ * create decoration classifies a freshly published v2 Session inside the same
+ * EventBoundary transaction, prompt keeps admission reconciliation, and every
+ * other method, including native MIME normalization, is delegated unchanged.
  */
-export function makeSessionFacadeNode(boundary: ReturnType<typeof makeEventBoundaryNode>, policy: SessionAdmissionPolicy) {
+export function makeSessionFacadeNode(boundary: ReturnType<typeof makeEventBoundaryNode>, policyInput: SessionPolicy) {
   const implementation = SessionV2.node.implementation
   if (!implementation) throw new Error("Pinned native Session node has no implementation")
   // LayerNode deliberately erases implementation types. This exact-pin bridge
@@ -48,13 +59,14 @@ export function makeSessionFacadeNode(boundary: ReturnType<typeof makeEventBound
     const events = yield* EventV2.Service
     const execution = yield* SessionExecution.Service
     const boundary = yield* EventBoundary
+    const policy = typeof policyInput === "function" ? policyInput({ database, session: native }) : policyInput
     const hash = (value: string) => createHash("sha256").update(value).digest("hex")
     const commitPrompt = (
       input: Parameters<SessionV2.Interface["prompt"]>[0],
-      validate: Effect.Effect<void, SessionV2.PromptConflictError> = Effect.void,
+      validate: (admitted: Effect.Success<ReturnType<SessionV2.Interface["prompt"]>>) => Effect.Effect<void, SessionV2.PromptConflictError> = () => Effect.void,
     ) => boundary.transaction(Effect.gen(function* () {
       const admitted = yield* native.prompt({ ...input, resume: false })
-      yield* validate
+      yield* validate(admitted)
       if (input.resume !== false) yield* boundary.afterCommit(execution.wake(admitted.sessionID))
       return admitted
     })).pipe(Effect.catch((error) => error instanceof SessionV2.NotFoundError || error instanceof SessionV2.PromptConflictError
@@ -84,7 +96,40 @@ export function makeSessionFacadeNode(boundary: ReturnType<typeof makeEventBound
           ${snapshot.apiContent}, ${hash(snapshot.apiContent)}, ${snapshot.rendererVersion})`).pipe(Effect.orDie)
       yield* database.db.run(sql`INSERT INTO cm_private_requirement (message_id, session_id, kind)
         VALUES (${request.messageID}, ${request.sessionID}, 'input')`).pipe(Effect.orDie)
+      // Empty clean inputs are the only snapshots we can safely synthesize. Use
+      // the native event's admission clock, not an earlier freeze timestamp.
+      const context = snapshot.context ?? (request.references.length === 0 && snapshot.apiContent === request.text
+        ? decodeLegacyContext({
+            ...renderContextSnapshot({
+              promptText: request.text, attachments: [], recall: { policy: "disabled", status: "disabled" },
+              budget: interactiveContextBudget,
+              createdAt: Schema.decodeUnknownSync(Schema.Struct({ timestamp: Schema.Number }))(
+                Schema.encodeUnknownSync(SessionEvent.PromptAdmitted.data)(event.data),
+              ).timestamp,
+            }).snapshot,
+            rendererVersion: snapshot.rendererVersion,
+          }, request.text).snapshot
+        : undefined)
+      if (context) yield* database.db.run(sql`INSERT INTO cm_legacy_input (message_id, session_id, snapshot_json)
+        VALUES (${request.messageID}, ${request.sessionID}, ${legacyCanonical(context)})`).pipe(Effect.orDie)
     }))
+
+    // Generate the branded identity once, then adopt or create inside a single
+    // boundary transaction so a fresh Created event and its runtime
+    // classification commit (or roll back) together. Historical rows are never
+    // silently reclassified: classification runs only when no Session existed.
+    const create: SessionV2.Interface["create"] = (input) => {
+      const sessionID = input.id ?? SessionSchema.ID.create()
+      return boundary.transaction(Effect.gen(function* () {
+        const existing = yield* native.get(sessionID).pipe(Effect.option)
+        if (Option.isSome(existing)) return existing.value
+        const session = yield* native.create({ ...input, id: sessionID })
+        yield* recordV2SessionCreated(sessionID).pipe(
+          Effect.provideService(Database.Service, database), Effect.orDie,
+        )
+        return session
+      })).pipe(Effect.orDie)
+    }
 
     const prompt: SessionV2.Interface["prompt"] = (input) => Effect.gen(function* () {
       const session = yield* native.get(input.sessionID)
@@ -99,21 +144,59 @@ export function makeSessionFacadeNode(boundary: ReturnType<typeof makeEventBound
       yield* policy.authorize(request).pipe(Effect.orDie)
       const existing = yield* SessionInput.find(database.db, request.messageID)
       const validateStored = Effect.gen(function* () {
-        const row = yield* database.db.get<{ request_hash: string; api_content: string; api_content_hash: string }>(sql`
-          SELECT request_hash, api_content, api_content_hash FROM cm_private_input
+        // Exact retries do not emit another admission event, so they need their
+        // own in-transaction authorization before acknowledgement or wake.
+        yield* policy.authorize(request).pipe(Effect.orDie)
+        const row = yield* database.db.get<{ request_hash: string; api_content: string; api_content_hash: string; renderer_version: number }>(sql`
+          SELECT request_hash, api_content, api_content_hash, renderer_version FROM cm_private_input
           WHERE message_id = ${request.messageID} AND session_id = ${request.sessionID}`).pipe(Effect.orDie)
         if (!row) return yield* Effect.die(new AdmissionError({ code: "missing-private-context" }))
-        if (row.request_hash !== privateRequestIdentity(request)) return yield* new SessionV2.PromptConflictError({ sessionID: request.sessionID, messageID: request.messageID })
-        if (hash(row.api_content) !== row.api_content_hash) return yield* Effect.die(new AdmissionError({ code: "invalid-snapshot" }))
+        const expected = row.request_hash.startsWith("legacy:")
+          ? "legacy:" + (yield* Effect.try({
+              try: () => legacyReferenceHash(request.references),
+              catch: () => new SessionV2.PromptConflictError({ sessionID: request.sessionID, messageID: request.messageID }),
+            }))
+          : privateRequestIdentity(request)
+        if (row.request_hash !== expected) return yield* new SessionV2.PromptConflictError({ sessionID: request.sessionID, messageID: request.messageID })
+        if (hash(row.api_content) !== row.api_content_hash || (row.renderer_version !== 1 && row.renderer_version !== 2))
+          return yield* Effect.die(new AdmissionError({ code: "invalid-snapshot" }))
+        const legacy = yield* database.db.get<{ snapshot_json: string }>(sql`SELECT snapshot_json FROM cm_legacy_input
+          WHERE message_id = ${request.messageID} AND session_id = ${request.sessionID}`).pipe(Effect.orDie)
+        if (legacy || row.request_hash.startsWith("legacy:")) {
+          const admitted = yield* SessionInput.find(database.db, request.messageID)
+          if (!admitted || admitted.sessionID !== request.sessionID) return yield* Effect.die(new AdmissionError({ code: "invalid-snapshot" }))
+          const context = yield* Effect.try({
+            try: () => decodeLegacyContext(Schema.decodeUnknownSync(Schema.UnknownFromJsonString)(legacy?.snapshot_json), admitted.prompt.text),
+            catch: () => new AdmissionError({ code: "invalid-snapshot" }),
+          }).pipe(Effect.orDie)
+          const referenceHash = yield* Effect.try({
+            try: () => legacyReferenceHash(request.references),
+            catch: () => new AdmissionError({ code: "invalid-snapshot" }),
+          }).pipe(Effect.orDie)
+          if (referenceHash !== context.contextRequestHash || row.api_content !== context.apiContent ||
+            row.api_content_hash !== context.apiContentHash || row.renderer_version !== context.rendererVersion) {
+            return yield* Effect.die(new AdmissionError({ code: "invalid-snapshot" }))
+          }
+        }
       })
       if (existing) yield* validateStored
-      const snapshot = existing ? undefined : yield* policy.freeze(request).pipe(Effect.orDie)
-      if (snapshot && snapshot.rendererVersion !== 1) return yield* Effect.die(new AdmissionError({ code: "invalid-snapshot" }))
+      const frozen = existing ? undefined : yield* policy.freeze(request).pipe(Effect.orDie)
+      const snapshot = frozen === undefined ? undefined : yield* Effect.try({
+        try: () => validateFrozenInput(request, frozen),
+        catch: () => new AdmissionError({ code: "invalid-snapshot" }),
+      }).pipe(Effect.orDie)
 
-      const operation = commitPrompt({ ...input, id: request.messageID }, validateStored)
+      const operation = commitPrompt({ ...input, id: request.messageID }, (admitted) => Effect.gen(function* () {
+        yield* validateStored
+        // Native projectors run before the event INSERT. Its immediate FK is
+        // safe only here, still inside the owning notification/wake boundary.
+        if (snapshot) yield* recordLegacyInputEvent(admitted.sessionID, admitted.id, admitted.admittedSeq).pipe(
+          Effect.provideService(Database.Service, database), Effect.orDie,
+        )
+      }))
       return yield* snapshot ? operation.pipe(Effect.provideService(PreparedInput, { request, snapshot })) : operation
     })
-    return SessionV2.Service.of({ ...native, prompt })
+    return SessionV2.Service.of({ ...native, create, prompt })
   })).pipe(Layer.provide(nativeLayer))
 
   return makeGlobalNode({

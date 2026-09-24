@@ -12,6 +12,10 @@ import { makeGlobalNode } from "@opencode-ai/core/effect/app-node"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { LayerNodePlatform } from "@opencode-ai/core/effect/app-node-platform"
 import { Location } from "@opencode-ai/core/location"
+import { ModelV2 } from "@opencode-ai/core/model"
+import { PermissionV2 } from "@opencode-ai/core/permission"
+import { ProviderV2 } from "@opencode-ai/core/provider"
+import { QuestionV2 } from "@opencode-ai/core/question"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { Snapshot } from "@opencode-ai/core/snapshot"
 import { ProjectV2 } from "@opencode-ai/core/project"
@@ -22,6 +26,7 @@ import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { SessionRunner } from "@opencode-ai/core/session/runner"
 import { node } from "@opencode-ai/core/session/runner/llm"
 import { SessionRunnerModel } from "@opencode-ai/core/session/runner/model"
+import { createLLMEventPublisher } from "@opencode-ai/core/session/runner/publish-llm-event"
 import { SessionRunCoordinator } from "@opencode-ai/core/session/run-coordinator"
 import { Session } from "@opencode-ai/schema/session"
 import { SessionMessage } from "@opencode-ai/schema/session-message"
@@ -30,9 +35,9 @@ import { Tool } from "@opencode-ai/core/tool/tool"
 import { SkillGuidance } from "@opencode-ai/core/skill/guidance"
 import { ReferenceGuidance } from "@opencode-ai/core/reference/guidance"
 import { SystemContext } from "@opencode-ai/core/system-context"
-import { LLMClient, LLMRequest, LLMEvent, Model } from "@opencode-ai/llm"
+import { LLMClient, LLMError, LLMRequest, LLMEvent, Model, ProviderInternalReason } from "@opencode-ai/llm"
 import { route } from "@opencode-ai/llm/protocols/openai-chat"
-import { Deferred, Effect, Fiber, Layer, ManagedRuntime, Schema, Scope, Stream } from "effect"
+import { Cause, Deferred, Effect, Fiber, Layer, ManagedRuntime, Option, Schema, Scope, Stream } from "effect"
 import { sql } from "drizzle-orm"
 import { makeEventBoundaryNode, makeMediatedEventNode } from "../src/event-boundary"
 import { initializeExtension } from "../src/kernel"
@@ -52,7 +57,14 @@ const text = (value = "answer"): LLMEvent[] => [LLMEvent.stepStart({ index: 0 })
 const toolCall = (): LLMEvent[] => [LLMEvent.stepStart({ index: 0 }), LLMEvent.toolCall({ id: "echo-call", name: "echo", input: { text: "tool result" } }),
   LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }), LLMEvent.finish({ reason: "tool-calls" })]
 
-async function fixture(options: { native?: boolean; compact?: boolean; overflow?: boolean; steps?: number; response?: (request: LLMRequest, index: number) => Stream.Stream<LLMEvent> } = {}) {
+async function fixture(options: {
+  native?: boolean
+  compact?: boolean
+  overflow?: boolean
+  steps?: number
+  response?: (request: LLMRequest, index: number) => Stream.Stream<LLMEvent, LLMError>
+  execute?: (input: { text: string }) => Effect.Effect<{ text: string }, Tool.Failure>
+} = {}) {
   const directory = await mkdtemp(join(tmpdir(), "cybermastery-runner-"))
   cleanup(directory)
   const requests: LLMRequest[] = []
@@ -90,18 +102,26 @@ async function fixture(options: { native?: boolean; compact?: boolean; overflow?
     const agents = yield* AgentV2.Service
     yield* agents.transform((editor) => editor.update(AgentV2.defaultID, (agent) => { agent.system = "Proof system"; agent.steps = options.steps }))
   }).pipe(Scope.provide(runtime.scope))).catch(async (error: unknown) => { await runtime.dispose(); throw error })
+  const runEffect = Effect.scoped(Effect.gen(function* () {
+    const registry = yield* ToolRegistry.Service
+    yield* registry.register({ echo: Tool.make({ description: "Echo text", input: Schema.Struct({ text: Schema.String }), output: Schema.Struct({ text: Schema.String }),
+      toModelOutput: ({ output }) => [{ type: "text", text: output.text }],
+      execute: (input) => Effect.gen(function* () {
+        tools.push(input.text)
+        return options.execute ? yield* options.execute(input) : input
+      }),
+    }) })
+    const runner = yield* SessionRunner.Service
+    yield* runner.run({ sessionID, force: false })
+  }))
   return {
-    runtime, requests, tools,
-    async run() {
-      return runtime.runPromise(Effect.scoped(Effect.gen(function* () {
-        const registry = yield* ToolRegistry.Service
-        yield* registry.register({ echo: Tool.make({ description: "Echo text", input: Schema.Struct({ text: Schema.String }), output: Schema.Struct({ text: Schema.String }),
-          toModelOutput: ({ output }) => [{ type: "text", text: output.text }],
-          execute: (input) => Effect.sync(() => { tools.push(input.text); return input }),
-        }) })
-        const runner = yield* SessionRunner.Service
-        yield* runner.run({ sessionID, force: false })
-      })))
+    runtime, requests, tools, runEffect,
+    async run() { return runtime.runPromise(runEffect) },
+    async history() {
+      return runtime.runPromise(Effect.gen(function* () {
+        const store = yield* SessionStore.Service
+        return yield* store.context(sessionID)
+      }))
     },
     async add(value: string, id = SessionMessage.ID.create(), delivery: "steer" | "queue" = "steer", privateText?: string) {
       return runtime.runPromise(Effect.gen(function* () {
@@ -241,4 +261,283 @@ test("one overflow recovery compacts private context before the next explicit pr
   expect(JSON.stringify(env.requests[0].messages)).toContain("private history")
   expect(JSON.stringify(env.requests[1].messages)).toContain("private history")
   expect(JSON.stringify(env.requests[2].messages)).toContain("recovered private summary")
+})
+
+for (const native of [true, false]) {
+  const name = native ? "stock" : "private"
+
+  test(`${name}: permission decline and question rejection interrupt rather than continue`, async () => {
+    // Real Tool/registry error mapping, not a proof of the permission HTTP flow.
+    for (const defect of [new PermissionV2.DeclinedError(), new QuestionV2.RejectedError()]) {
+      await using env = await fixture({ native, execute: () => Effect.die(defect), response: (_request, index) => Stream.fromIterable(index === 0 ? toolCall() : text()) })
+      await env.add("ask before using the tool")
+      const exit = await env.runtime.runPromise(Effect.exit(env.runEffect))
+      expect(exit._tag).toBe("Failure")
+      if (exit._tag === "Failure") expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true)
+      expect(env.requests).toHaveLength(1)
+      expect(env.tools).toEqual(["tool result"])
+      const history = JSON.stringify(await env.history())
+      expect(history).toContain("Tool execution interrupted")
+      expect(history).not.toContain("Tool execution failed:")
+    }
+  })
+
+  test(`${name}: corrected and blocked tool failures become model-facing results`, async () => {
+    for (const failure of [
+      { error: new PermissionV2.CorrectedError({ feedback: "Use another tool" }), message: "Use another tool" },
+      { error: new PermissionV2.BlockedError({ rules: [{ action: "echo", resource: "*", effect: "deny" }] }), message: "Echo is blocked by policy" },
+    ]) {
+      await using env = await fixture({ native,
+        execute: () => Effect.fail(failure.error).pipe(Effect.mapError(() => new Tool.Failure({ message: failure.message }))),
+        response: (_request, index) => Stream.fromIterable(index === 0 ? toolCall() : text()),
+      })
+      await env.add("use the tool")
+      await env.run()
+      expect(env.tools).toEqual(["tool result"])
+      expect(env.requests).toHaveLength(2)
+      expect(JSON.stringify(env.requests[1].messages.filter((message) => message.role === "tool"))).toContain(failure.message)
+      const history = JSON.stringify(await env.history())
+      expect(history).toContain(failure.message)
+      expect(history).not.toContain("Tool execution interrupted")
+    }
+  })
+
+  test(`${name}: ordinary tool defects retain non-interruption cleanup and continuation`, async () => {
+    await using env = await fixture({ native, execute: () => Effect.die(new Error("ordinary tool defect")),
+      response: (_request, index) => Stream.fromIterable(index === 0 ? toolCall() : text()),
+    })
+    await env.add("use the failing tool")
+    await env.run()
+    expect(env.requests).toHaveLength(2)
+    expect(env.tools).toEqual(["tool result"])
+    expect(JSON.stringify(env.requests[1].messages.filter((message) => message.role === "tool"))).toContain("Tool execution failed: ordinary tool defect")
+    expect(JSON.stringify(await env.history())).not.toContain("Tool execution interrupted")
+  })
+
+  test(`${name}: provider events, typed failures and EOF settle outstanding hosted calls`, async () => {
+    for (const ending of ["event", "raw", "eof"] as const) {
+      const error = new LLMError({ module: "proof", method: "stream", reason: new ProviderInternalReason({ message: "Provider unavailable", status: 503 }) })
+      await using env = await fixture({ native, response: (_request, index) => {
+        if (index > 0) return Stream.fromIterable(text())
+        const start = Stream.fromIterable([
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.textStart({ id: "partial" }),
+          LLMEvent.textDelta({ id: "partial", text: "visible unfinished text" }),
+          LLMEvent.toolCall({ id: "hosted", name: "echo", input: { text: "hosted only" }, providerExecuted: true }),
+          LLMEvent.toolCall({ id: "local", name: "echo", input: { text: "local result" } }),
+        ])
+        if (ending === "raw") return Stream.concat(start, Stream.fail(error))
+        if (ending === "event") return Stream.concat(start, Stream.make(LLMEvent.providerError({ message: "Provider unavailable" })))
+        return start
+      } })
+      await env.add("use hosted and local tools")
+      const exit = await env.runtime.runPromise(Effect.exit(env.runEffect))
+      expect(exit._tag).toBe(ending === "raw" ? "Failure" : "Success")
+      if (exit._tag === "Failure") expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toBe(error)
+      expect(env.tools).toEqual(["local result"])
+      expect(env.requests).toHaveLength(ending === "eof" ? 2 : 1)
+      const messages = await env.history()
+      const hosted = messages.flatMap((message) => message.type === "assistant" ? message.content.filter((part) => part.type === "tool" && part.id === "hosted") : [])
+      expect(hosted).toHaveLength(1)
+      expect(JSON.stringify(hosted)).toContain(ending === "event" ? "Tool execution interrupted" : "Provider did not return a tool result")
+      expect(JSON.stringify(messages)).toContain("visible unfinished text")
+      if (ending !== "eof") {
+        expect(messages.find((message) => message.type === "assistant")).toMatchObject({ finish: "error", error: { type: "unknown", message: "Provider unavailable" } })
+      }
+    }
+  })
+
+  test(`${name}: a raw provider failure waits for an already-started local tool`, async () => {
+    const entered = Deferred.makeUnsafe<void>()
+    const release = Deferred.makeUnsafe<void>()
+    const failed = Deferred.makeUnsafe<void>()
+    const completed = Deferred.makeUnsafe<void>()
+    const error = new LLMError({ module: "proof", method: "stream", reason: new ProviderInternalReason({ message: "Provider unavailable", status: 503 }) })
+    await using env = await fixture({ native,
+      execute: () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)), Effect.as({ text: "completed local output" })),
+      response: () => Stream.concat(Stream.make(LLMEvent.toolCall({ id: "local", name: "echo", input: { text: "settled after failure" } })),
+        Stream.unwrap(Deferred.await(entered).pipe(Effect.andThen(Deferred.succeed(failed, undefined)), Effect.as(Stream.fail(error))))),
+    })
+    await env.add("wait for the local tool")
+    await env.runtime.runPromise(Effect.scoped(Effect.gen(function* () {
+      const fiber = yield* env.runEffect.pipe(Effect.ensuring(Deferred.succeed(completed, undefined)), Effect.forkScoped)
+      yield* Deferred.await(failed)
+      expect(Option.isNone(yield* Deferred.poll(completed))).toBe(true)
+      yield* Deferred.succeed(release, undefined)
+      const exit = yield* Fiber.await(fiber)
+      expect(exit._tag).toBe("Failure")
+      if (exit._tag === "Failure") expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toBe(error)
+    })))
+    expect(env.requests).toHaveLength(1)
+    expect(env.tools).toEqual(["settled after failure"])
+    const messages = await env.history()
+    const local = messages.flatMap((message) => message.type === "assistant" ? message.content.filter((part) => part.type === "tool" && part.id === "local") : [])
+    expect(local).toHaveLength(1)
+    expect(JSON.stringify(local)).toContain("completed local output")
+    expect(JSON.stringify(local)).not.toContain("Provider did not return a tool result")
+    expect(JSON.stringify(local)).not.toContain("Tool execution interrupted")
+  })
+
+  test(`${name}: interruption cancels a local tool and flushes partial visible text`, async () => {
+    const entered = Deferred.makeUnsafe<void>()
+    const cancelled = Deferred.makeUnsafe<void>()
+    const release = Deferred.makeUnsafe<void>()
+    await using env = await fixture({ native,
+      execute: (input) => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)), Effect.as(input), Effect.ensuring(Deferred.succeed(cancelled, undefined))),
+      response: () => Stream.concat(Stream.fromIterable([
+        LLMEvent.stepStart({ index: 0 }), LLMEvent.textStart({ id: "partial" }),
+        LLMEvent.textDelta({ id: "partial", text: "interrupted partial text" }),
+        LLMEvent.toolCall({ id: "local", name: "echo", input: { text: "blocked execution" } }),
+      ]), Stream.never),
+    })
+    await env.add("interrupt a running tool")
+    await env.runtime.runPromise(Effect.scoped(Effect.gen(function* () {
+      const fiber = yield* env.runEffect.pipe(Effect.forkScoped)
+      yield* Deferred.await(entered)
+      // Stock FiberSet registration follows synchronous child startup. This
+      // comparison cancels only after that registration has completed.
+      yield* Effect.yieldNow
+      yield* Fiber.interrupt(fiber)
+      const exit = yield* Fiber.await(fiber)
+      expect(exit._tag).toBe("Failure")
+      if (exit._tag === "Failure") expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true)
+      expect(Option.isSome(yield* Deferred.poll(cancelled))).toBe(true)
+    })))
+    expect(env.requests).toHaveLength(1)
+    const history = JSON.stringify(await env.history())
+    expect(history).toContain("interrupted partial text")
+    expect(history).toContain("Tool execution interrupted")
+    expect(history).toContain("Provider turn interrupted")
+    expect(history).not.toContain("Tool execution failed:")
+  })
+
+  test(`${name}: overflow after visible output fails the assistant without summarization`, async () => {
+    await using env = await fixture({ native, overflow: true, response: () => Stream.fromIterable([
+      LLMEvent.stepStart({ index: 0 }), LLMEvent.textStart({ id: "partial" }),
+      LLMEvent.textDelta({ id: "partial", text: "output before overflow" }),
+      LLMEvent.providerError({ message: "prompt too long", classification: "context-overflow" }),
+    ]) })
+    await env.add("history ".repeat(1600))
+    await env.run()
+    expect(env.requests).toHaveLength(1)
+    const messages = await env.history()
+    expect(JSON.stringify(messages)).toContain("output before overflow")
+    expect(messages.find((message) => message.type === "assistant")).toMatchObject({ finish: "error", error: { type: "unknown", message: "prompt too long" } })
+  })
+
+  test(`${name}: raw failure flushes partial reasoning and tool input without executing it`, async () => {
+    const error = new LLMError({ module: "proof", method: "stream", reason: new ProviderInternalReason({ message: "Provider unavailable", status: 503 }) })
+    await using env = await fixture({ native, response: () => Stream.concat(Stream.fromIterable([
+      LLMEvent.reasoningStart({ id: "thought" }),
+      LLMEvent.reasoningDelta({ id: "thought", text: "partial reasoning" }),
+      LLMEvent.toolInputStart({ id: "incomplete", name: "echo" }),
+      LLMEvent.toolInputDelta({ id: "incomplete", name: "echo", text: '{"text":"unfinished' }),
+    ]), Stream.fail(error)) })
+    await env.add("flush incomplete fragments")
+    const exit = await env.runtime.runPromise(Effect.exit(env.runEffect))
+    expect(exit._tag).toBe("Failure")
+    if (exit._tag === "Failure") expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toBe(error)
+    expect(env.requests).toHaveLength(1)
+    expect(env.tools).toEqual([])
+    const content = (await env.history()).flatMap((message) => message.type === "assistant" ? message.content : [])
+    expect(content.find((part) => part.type === "reasoning")).toMatchObject({ type: "reasoning", text: "partial reasoning" })
+    expect(content.find((part) => part.type === "tool")).toMatchObject({ type: "tool", id: "incomplete", state: { input: '{"text":"unfinished' } })
+  })
+
+  test(`${name}: provider interruption takes precedence over an already-failed tool`, async () => {
+    const failed = Deferred.makeUnsafe<Fiber.Fiber<unknown, unknown>>()
+    await using env = await fixture({ native,
+      execute: () => Effect.withFiber((fiber) => Deferred.succeed(failed, fiber).pipe(Effect.andThen(Effect.die(new Error("prior tool defect"))))),
+      response: () => Stream.concat(Stream.make(LLMEvent.toolCall({ id: "failed", name: "echo", input: { text: "fail first" } })), Stream.never),
+    })
+    await env.add("interrupt after a tool has failed")
+    await env.runtime.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* env.runEffect.pipe(Effect.forkScoped)
+      const tool = yield* Deferred.await(failed)
+      expect((yield* Fiber.await(tool))._tag).toBe("Failure")
+      // Let the stock synchronous spawn finish registering its completed child.
+      yield* Effect.yieldNow
+      yield* Fiber.interrupt(run)
+      const exit = yield* Fiber.await(run)
+      expect(exit._tag).toBe("Failure")
+      if (exit._tag === "Failure") expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true)
+    })))
+    const history = JSON.stringify(await env.history())
+    expect(history).toContain("Tool execution interrupted")
+    expect(history).not.toContain("Tool execution failed: prior tool defect")
+    expect(env.requests).toHaveLength(1)
+  })
+
+  test(native ? "stock: reentrant cancellation precedes tool registration" : "private: reentrant cancellation waits for the started tool's cleanup", async () => {
+    const entered = Deferred.makeUnsafe<void>()
+    const cancelled = Deferred.makeUnsafe<void>()
+    await using env = await fixture({ native,
+      execute: () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never), Effect.ensuring(Deferred.succeed(cancelled, undefined))),
+      response: () => Stream.concat(Stream.make(LLMEvent.toolCall({ id: "reentrant", name: "echo", input: { text: "cancel immediately" } })), Stream.never),
+    })
+    await env.add("cancel as soon as the tool starts")
+    await env.runtime.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* env.runEffect.pipe(Effect.forkScoped)
+      yield* Deferred.await(entered)
+      // Deliberately no yield: a same-process observer can cancel reentrantly.
+      yield* Fiber.interrupt(run)
+      expect((yield* Fiber.await(run))._tag).toBe("Failure")
+      expect(Option.isSome(yield* Deferred.poll(cancelled))).toBe(!native)
+    })))
+    expect(env.requests).toHaveLength(1)
+    expect(JSON.stringify(await env.history())).toContain("Tool execution interrupted")
+  })
+}
+
+test("private: relocated Sessions are rejected before unfinished-tool repair or inbox promotion", async () => {
+  await using env = await fixture()
+  await env.add("pending relocated input")
+  const before = await env.runtime.runPromise(Effect.gen(function* () {
+    const database = yield* Database.Service
+    const events = yield* EventV2.Service
+    const publisher = createLLMEventPublisher(events, {
+      sessionID, agent: "build", model: { id: ModelV2.ID.make("proof-model"), providerID: ProviderV2.ID.make("proof") },
+    })
+    yield* publisher.publish(LLMEvent.toolCall({ id: "unfinished", name: "echo", input: { text: "old" } }))
+    const sequence = yield* EventV2.latestSequence(database.db, sessionID)
+    yield* database.db.run(sql`UPDATE session SET workspace_id = 'wrk_moved' WHERE id = ${sessionID}`)
+    return sequence
+  }))
+  const history = await env.history()
+  expect(history.flatMap((message) => message.type === "assistant" ? message.content.filter((part) => part.type === "tool") : [])).toMatchObject([
+    { id: "unfinished", state: { status: "running" } },
+  ])
+  const exit = await env.runtime.runPromise(Effect.exit(env.runEffect))
+  expect(exit._tag).toBe("Failure")
+  if (exit._tag === "Failure") expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true)
+  expect(env.requests).toEqual([])
+  expect(env.tools).toEqual([])
+  expect(await env.history()).toEqual(history)
+  await env.runtime.runPromise(Effect.gen(function* () {
+    const database = yield* Database.Service
+    expect(yield* EventV2.latestSequence(database.db, sessionID)).toBe(before)
+    expect(yield* SessionInput.hasPending(database.db, sessionID, "steer")).toBe(true)
+  }))
+})
+
+test("private: idle advisory runs remain no-ops while a forced missing Session still fails", async () => {
+  await using env = await fixture()
+  await env.runtime.runPromise(Effect.gen(function* () {
+    const database = yield* Database.Service
+    const runner = yield* SessionRunner.Service
+    yield* database.db.run(sql`UPDATE session SET workspace_id = 'wrk_moved' WHERE id = ${sessionID}`)
+    const before = yield* EventV2.latestSequence(database.db, sessionID)
+    yield* runner.run({ sessionID, force: false })
+    expect(yield* EventV2.latestSequence(database.db, sessionID)).toBe(before)
+    const missing = Session.ID.make("ses_missing")
+    yield* runner.run({ sessionID: missing, force: false })
+    const exit = yield* Effect.exit(runner.run({ sessionID: missing, force: true }))
+    expect(exit._tag).toBe("Failure")
+    if (exit._tag === "Failure") {
+      expect(Cause.hasDies(exit.cause)).toBe(true)
+      expect(Cause.hasInterruptsOnly(exit.cause)).toBe(false)
+    }
+  }))
+  expect(env.requests).toEqual([])
+  expect(env.tools).toEqual([])
 })
