@@ -8,6 +8,7 @@ import { SessionEvent } from "@opencode-ai/schema/session-event"
 import { Effect, Option, Schema } from "effect"
 import { sql } from "drizzle-orm"
 import { EventBoundary } from "./event-boundary"
+import type { OperatingChatProfile } from "@cybermastery/contracts/operating-chat"
 import { decodeLegacyContext, legacyReferenceHash, type LegacyJsonObject } from "./legacy-context"
 import type { Mode } from "./transfer-readiness"
 
@@ -32,6 +33,8 @@ export type FrozenInput = {
   readonly rendererVersion: number
   /** Complete original private producer snapshot, not raw request attachments. */
   readonly context?: LegacyJsonObject
+  /** Trusted preparation proof, checked again inside the admission transaction. */
+  readonly operatingChat?: OperatingChatProfile
 }
 
 export type AdmissionPolicy = {
@@ -52,12 +55,14 @@ const digest = (value: string) => createHash("sha256").update(value).digest("hex
 export function validateFrozenInput(request: AdmissionRequest, snapshot: FrozenInput): FrozenInput {
   if (snapshot.rendererVersion !== 1 && snapshot.rendererVersion !== 2)
     throw new AdmissionError({ code: "invalid-snapshot" })
-  if (snapshot.context === undefined) return { apiContent: snapshot.apiContent, rendererVersion: snapshot.rendererVersion }
+  if (snapshot.context === undefined) return { apiContent: snapshot.apiContent, rendererVersion: snapshot.rendererVersion,
+    operatingChat: snapshot.operatingChat }
   const context = decodeLegacyContext(snapshot.context, request.text)
   if (context.apiContent !== snapshot.apiContent || context.apiContentHash !== digest(snapshot.apiContent) ||
     context.rendererVersion !== snapshot.rendererVersion || context.contextRequestHash !== legacyReferenceHash(request.references))
     throw new AdmissionError({ code: "invalid-snapshot" })
-  return { apiContent: context.apiContent, rendererVersion: context.rendererVersion, context: context.snapshot }
+  return { apiContent: context.apiContent, rendererVersion: context.rendererVersion, context: context.snapshot,
+    operatingChat: snapshot.operatingChat }
 }
 
 export const privateRequestIdentity = (request: AdmissionRequest) => digest(JSON.stringify({

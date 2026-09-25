@@ -63,6 +63,7 @@
     "@opencode-ai/core/v1/session",
     "@opencode-ai/core/workspace",
     "@opencode-ai/schema/agent",
+    "@opencode-ai/schema/identifier",
     "@opencode-ai/schema/model",
     "@opencode-ai/schema/prompt-input",
     "@opencode-ai/schema/revert",

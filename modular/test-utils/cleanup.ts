@@ -13,7 +13,7 @@ export function databaseCleanup() {
   return (directory: string) => { directories.add(directory) }
 }
 
-async function remove(directory: string, retries = 30): Promise<void> {
+async function remove(directory: string, retries = 100): Promise<void> {
   Bun.gc(true)
   await rm(directory, { recursive: true, force: true }).catch(async (error: NodeJS.ErrnoException) => {
     if (error.code !== "EBUSY" || retries === 0) throw error

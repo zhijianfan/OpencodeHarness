@@ -110,6 +110,17 @@
       "evidence": "child-runner.test.ts; parent-tool-child.test.ts; session-classification.test.ts; session-execution.test.ts"
     }
   ],
+  "featureExtensions": [
+    {
+      "id": "ctxpack-catalog-foundation",
+      "classification": "extend",
+      "nativeBoundary": "Captured Database.Service and EventBoundary; native schema identifier generator",
+      "owner": "modular/packages/contracts/src/ctxpack.ts; ctxpack-capsule.ts; operating-chat.ts; modular/packages/domain/src/ctxpack-content.ts; modular/packages/adapters-opencode/src/ctxpack-catalog.ts; ctxpack-capsule.ts; ctxpack-materializer.ts; ctxpack-usage.ts; ctxpack-http.ts; ctxpack-recall.ts; operating-chat-binding.ts; application.ts; modular/packages/client/src/ctxpack.ts",
+      "behavior": "Owned CtxPack DTOs, normalization/hash/search terms, catalog CRUD/CAS/FTS/pins, durable capsules, authorized snapshot materialization, once-only native admitted-input usage, authenticated extension HTTP and typed browser-safe client; private generic Session prompts use the same graph. Trusted host-bound OperatingChat Sessions additionally use bounded advisory recall and transaction-time binding/authority revalidation.",
+      "limitations": ["Complete OperatingChat host layout/functionality-instance lifecycle, full browser UI/event multiplexing, worker/batch result packs and copied original ctx_pack/capsule/usage table migration remain pending"],
+      "evidence": "ctxpack-content.test.ts; ctxpack-catalog.test.ts; ctxpack-capsule.test.ts; ctxpack-materializer.test.ts; ctxpack-usage.test.ts; ctxpack-http.test.ts; ctxpack-recall.test.ts; operating-chat-binding.test.ts; ctxpack-application.test.ts; client/ctxpack.test.ts; compat/inventory/ctxpack.md"
+    }
+  ],
   "copiedNativeProductionImplementations": [],
   "vendorSourceModifications": []
 }

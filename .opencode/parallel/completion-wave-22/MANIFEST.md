@@ -1,0 +1,3 @@
+# T10 wave22 — trusted OperatingChat binding profile
+
+Base pushed e5d66cd, waves16–21 local. DeepSeek V4.1 Flash/high worker `ses_f2c272428ffeWh8NPhN7xfRh0e`, response cap131072, edited only src/operating-chat-binding.ts and test/operating-chat-binding.test.ts in modular/packages/adapters-opencode. Master froze browser-safe profile/descriptor/error contract in contracts/src/operating-chat.ts, corrected binding issues and wired bounded recall into selected application admission. No worker edits Session/app/recall/catalog or vendor/fork. Full proof at 2026-09-24T15:02:26.121Z: 659 pass / 1 POSIX-only skip / 0 fail; G2 remains in progress. Full product OperatingChat ensure/reset/feature UI and migration are not claimed by this bounded binding.

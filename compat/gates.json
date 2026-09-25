@@ -6,7 +6,7 @@
     "G0": {"status": "partial", "reason": "Baseline captured; 1128 path dispositions require source-level review rather than automatic path classification."},
     "G1A": {"status": "proof-slice-implemented", "reason": "Independent Solid shell, descriptor registry, extension client, authenticated host, scoped SSE, native database graph and layout CAS have executable coverage. This is not the complete native host surface."},
     "G1B": {"status": "passed", "scope": "T05/T06 selected-graph feasibility; not full production feature/host parity", "reason": "Native/owned HTTP, clean/private readiness admission, provider/compaction reconstruction, parent-tool child ownership, full bundle/epoch/local-revert deletion restore, authenticated paged transfer and representative copied-fork upgrade are verified. 486 pass, 1 platform skip, 0 fail. Measured replacements accepted; independent source-based re-review passed. Later feature/host/product-migration release gates remain blocked.", "evidence": "compat/G1B_ACCEPTANCE.md", "review": "modular/G1B_REVIEW.md"},
-    "G2": {"status": "not-started-broad-extraction"},
+    "G2": {"status": "in-progress", "reason": "T08 CtxPack catalog, capsule/materializer, authenticated HTTP/client, explicit generic Session admission and trusted bound-OperatingChat bounded recall/once-only usage have executable proof. Full OperatingChat layout/functionality-instance lifecycle, browser UI/event multiplexing, worker/batch packs, other T07–T11 features and copied-data migration remain incomplete.", "evidence": "compat/inventory/ctxpack.md"},
     "G3": {"status": "not-started"},
     "G4": {"status": "not-started-full-migration-and-host-matrix"},
     "G5": {"status": "not-started-upgrade-drill"}

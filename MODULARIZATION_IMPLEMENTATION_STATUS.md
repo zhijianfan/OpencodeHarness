@@ -1,14 +1,18 @@
 # Zero-patch modularization implementation status
 
-Date: 2026-09-24
+Date: 2026-09-25
 
 ## Overall state
+
+Latest successful full modular proof: **659 pass / 1 POSIX-only skip / 0 fail** at **2026-09-24T15:22:33.050Z**. The earlier wave22 timestamp and historical G1B table below document their respective checkpoints.
 
 **G1B T05/T06 feasibility has passed; modularization remains partial.** The one-graph host, private/clean readiness admission, native provider/compaction integration, parent-tool child ownership, authenticated paged transfer and representative copied-fork Session upgrade have executed proof and independent review. Full feature extraction, product-data migration and production host/provider acceptance still block removal of the integrated runtime.
 
 Checkpoints `48b592f` and `d8fdf95` were pushed to `OpencodeHarness/main`; their pre-push hooks passed 31 typecheck tasks. This HTTP/child/transfer-foundation checkpoint collects waves 4–10; consult Git history for its publication. `D:\CyberMastery` remains unchanged.
 
 The requested push of waves 4–10 completed as **f2ff727b93eeea0a729b3aa67743da3d2c84b95a**, with remote main verified and 31/31 pre-push tasks passing. This G1B completion checkpoint collects waves11–15; consult Git history for its publication.
+
+G1B completion was subsequently pushed as **e5d66cdb76d5fcc2e2dc3cea7614d568b2fcd85b** (`feat(harness): complete private session integration gate`), with remote main verified and 31/31 hook tasks passed. T08/T10 extraction now includes CtxPack contracts, catalog, capsules, materialization, usage, HTTP/client, generic explicit Session context and trusted host-bound OperatingChat automatic recall/admission. This subsequent work is local. Latest full proof is **659 pass / 1 skip / 0 fail** (2026-09-24T15:02:26.121Z), domain51/client42/adapter512. The table below retains the historical G1B checkpoint; `compat/inventory/ctxpack.md` records extraction and remaining work.
 
 ## Completed work
 
@@ -41,7 +45,7 @@ The requested push of waves 4–10 completed as **f2ff727b93eeea0a729b3aa67743da
 27. Added actual parent Location ToolRegistry batch-shaped child tests for external joining/interruption, parent cancellation, independently owned children and completed retries. The explicit six-module replacement decision measures 1,233 physical lines with delegated authority and pin-upgrade obligations.
 28. Completed independent read-only G1B review and follow-up. Initial partial findings are preserved; final verdict passes the bounded T05/T06 milestone. See `compat/G1B_ACCEPTANCE.md` and `modular/G1B_REVIEW.md`.
 
-The proof shell deliberately has only a static card grid. It does not claim that OperatingChat, MasterAgent, CtxPack, ChatRelay, skills, Scratchpad, all native screens or existing data have been fully extracted.
+The proof shell deliberately has only a static card grid. Trusted OperatingChat binding/recall is a bounded server-side slice, not full OperatingChat lifecycle or browser UI. MasterAgent, ChatRelay, skills, Scratchpad, other native screens and existing data have not been fully extracted.
 
 ## Verification
 
@@ -58,7 +62,7 @@ Machine-readable output: `compat/verification.json`.
 | Integrated app typecheck and corrected MasterAgent registration suite | Previously verified pass; 4 tests, unchanged in this continuation |
 | Official upstream before/after attestation | Same pin, tree and source digest |
 
-The latest proof verification (2026-09-24T09:41:58.276Z) records **486 passing tests**, including **419 adapter tests**, with **one POSIX-only symlink case skipped on Windows**. The separately recorded integrated-app regression adds four earlier passes, not part of the latest proof command. The browser smoke drives installed Edge through a Node subprocess while the proof application remains on Bun. No toolchain upgrade was made. SQLite runtimes are disposed immediately; per-file suite cleanup unlinks temporary databases after test frames release Windows native statements, and cleanup failures remain test failures.
+The table above is the historical G1B acceptance snapshot. Current proof verification (2026-09-24T15:02:26.121Z) records **659 passing tests**, including **512 adapter tests**, with **one POSIX-only symlink case skipped on Windows**. The separately recorded integrated-app regression adds four earlier passes, not part of the proof command. The browser smoke drives installed Edge through a Node subprocess while the proof application remains on Bun. SQLite runtimes are disposed immediately; per-file suite cleanup unlinks temporary databases after test frames release Windows native statements, and cleanup failures remain test failures.
 
 This is not the full repository suite, a Linux run, live ChatGPT-site verification, complete migration coverage, all native host surfaces or an upstream-pin upgrade drill.
 
@@ -96,7 +100,7 @@ Seven workers across three waves used `opencode-go/deepseek-v4.1-flash` with var
 
 See `compat/workers.json` and `.opencode/parallel/zero-patch-wave-*`. Wave 3 supplied the checkpoint and history helpers; the master implemented transaction mediation, projection restore and provider/compaction integration. The worker definition is loaded by new OpenCode sessions; existing sessions retain their previously loaded configuration.
 
-Current completion manifests run through `.opencode/parallel/completion-wave-15/MANIFEST.md`; workers use `harness-worker` with explicit `--model opencode-go/deepseek-v4.1-flash --variant high`. The independent read-only reviewer uses `harness-g1b-review` with the same model/variant. Fresh CLI processes load their configuration.
+Current completion manifests run through `.opencode/parallel/completion-wave-22/MANIFEST.md`; workers use `harness-worker` with explicit `--model opencode-go/deepseek-v4.1-flash --variant high`. The independent read-only G1B reviewer used `harness-g1b-review` with the same model/variant. Fresh CLI processes load their configuration.
 
 ## Entry points
 

@@ -50,6 +50,9 @@ type StoredPrivate = {
 export type SessionAdmissionPolicy = AdmissionPolicy & {
   /** Must be a local policy/binding lookup; also called by the atomic projector guard. */
   readonly managed: (session: SessionSchema.Info) => Effect.Effect<boolean>
+  /** Runs only for a newly admitted private prompt, after native admission and before commit/wake. */
+  readonly onAdmitted?: (input: { readonly request: AdmissionRequest; readonly admitted: SessionInput.Admitted;
+    readonly snapshot: FrozenInput }) => Effect.Effect<void, AdmissionError>
 }
 
 export type SessionPolicy = SessionAdmissionPolicy | ((dependencies: {
@@ -267,6 +270,7 @@ export function makeSessionFacadeNode(
           yield* recordLegacyInputEvent(admitted.sessionID, admitted.id, admitted.admittedSeq).pipe(
             Effect.provideService(Database.Service, database), Effect.orDie,
           )
+          if (policy.onAdmitted) yield* policy.onAdmitted({ request: preparedRequest, admitted, snapshot }).pipe(Effect.orDie)
         }))
         return yield* operation.pipe(Effect.provideService(PreparedInput, { kind: "private", request: preparedRequest, snapshot }))
       })

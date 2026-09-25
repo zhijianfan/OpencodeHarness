@@ -10,7 +10,14 @@
     "./application": "./src/application.ts",
     "./child-runner": "./src/child-runner.ts",
     "./transfer-client": "./src/transfer-client.ts",
-    "./fork-session-copy": "./src/fork-session-copy.ts"
+    "./fork-session-copy": "./src/fork-session-copy.ts",
+    "./ctxpack-catalog": "./src/ctxpack-catalog.ts",
+    "./ctxpack-capsule": "./src/ctxpack-capsule.ts",
+    "./ctxpack-materializer": "./src/ctxpack-materializer.ts",
+    "./ctxpack-usage": "./src/ctxpack-usage.ts",
+    "./ctxpack-http": "./src/ctxpack-http.ts",
+    "./ctxpack-recall": "./src/ctxpack-recall.ts",
+    "./operating-chat-binding": "./src/operating-chat-binding.ts"
   },
   "dependencies": {
     "@cybermastery/contracts": "workspace:*",

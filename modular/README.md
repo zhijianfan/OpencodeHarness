@@ -88,6 +88,14 @@ Native creation/adoption and simultaneous Sessions in two Locations now have exe
 
 Server-side composition exports now include `@cybermastery/adapters-opencode/child-runner`, `./transfer-client` and `./fork-session-copy`. The copy importer is a digest-bound, read-only representative Session upgrade experiment; full product-data migration/rollback remains a later gate.
 
+### CtxPack extraction in progress
+
+Latest full proof rerun: **659 pass / 1 POSIX-only skip / 0 fail**, **2026-09-24T15:22:33.050Z**; the earlier wave22 proof timestamp below is retained for provenance.
+
+`@cybermastery/contracts/ctxpack` owns the browser-safe DTOs; `@cybermastery/domain/ctxpack-content` owns server-side normalization, frozen content/provenance hashes, UTF-8 splitting and search/recall terms. `@cybermastery/adapters-opencode/ctxpack-catalog` exports an explicitly authorized catalog over the selected native Database/EventBoundary, with revision CAS, private-pack filtering, FTS and per-user pins.
+
+Capsule storage, authorized materialization, once-only native admitted-input usage, authenticated catalog HTTP and `@cybermastery/client/ctxpack` borrow the same selected graph. An actual browser-safe client→HTTP materialize→readiness-gated Session prompt verifies private/public separation and usage once on exact retry. The host may explicitly supply an observed-layout/functionality-instance authorization port for a trusted OperatingChat binding; only these bound Sessions may automatically recall packs, with native placement/runtime checks and transaction-time revalidation. The proof app exposes no client binding route. Latest full proof: **659 pass / 1 platform skip / 0 fail**, at **2026-09-24T15:02:26.121Z**, with adapter512. G1B's historical 486-test acceptance is recorded separately. Full OperatingChat lifecycle/UI, event multiplexing, worker/batch packs and copied-data migration remain pending. See `../compat/inventory/ctxpack.md`.
+
 Current-fork data migration and all supported CLI/desktop/embedded/TUI workflows remain pending. **Do not remove the integrated source based on this proof.**
 
 ## Worker provenance

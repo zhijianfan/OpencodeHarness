@@ -1,0 +1,5 @@
+# T08 wave18 — capsule materializer
+
+Wave16/17 are local on e5d66cd. Wave17 focused proof: capsule+usage+catalog 36 pass / 0 fail; package typecheck pass. Worker uses opencode-go/deepseek-v4.1-flash/high with 131072 response cap. Master froze the additive materializer types in contracts/src/ctxpack-capsule.ts. Materializer lane owns only src/ctxpack-materializer.ts and test/ctxpack-materializer.test.ts; no changes to catalog/capsules/session graph until master integration. Full proof and architecture checks follow return. T08/G2 stays in progress.
+
+Outcome: materializer session ses_f2c8f8e06ffePtnpvCErBFSOKD. Master supplied missing createdBy and integrated catalog/capsule/materializer/usage into one selected application with an actual HTTP Session private admission and once-only usage ledger. The combined materializer/capsule/usage focused tests: 39 pass; application flow test passed. Full proof after HTTP: 607 pass / 1 skip at 2026-09-24T13:13:28.187Z. Product migration/UI remain pending.

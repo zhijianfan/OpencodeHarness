@@ -2,7 +2,7 @@
   "name": "@cybermastery/domain",
   "private": true,
   "type": "module",
-  "exports": {"./layout": "./src/layout.ts"},
+  "exports": {"./layout": "./src/layout.ts", "./ctxpack-content": "./src/ctxpack-content.ts"},
   "dependencies": {"@cybermastery/contracts": "workspace:*"},
-  "scripts": {"typecheck": "tsgo --noEmit"}
+  "scripts": {"typecheck": "tsgo --noEmit", "test": "bun test src"}
 }

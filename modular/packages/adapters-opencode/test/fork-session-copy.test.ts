@@ -228,7 +228,12 @@ async function buildSource(directory: string, specs: readonly SessionSpec[]): Pr
       return results
     }))
     await runtime.dispose()
-    return { bytes: await serializeCopy(sourcePath, directory), sourcePath, sessions }
+    const bytes = await serializeCopy(sourcePath, directory)
+    // The live SQLite fixture may checkpoint its WAL into source.db after the
+    // runtime closes. Compare the independent, immutable copied image instead.
+    const frozenPath = join(directory, "frozen-source.db")
+    await Bun.write(frozenPath, bytes)
+    return { bytes, sourcePath: frozenPath, sessions }
   } catch (error) {
     await runtime.dispose()
     throw error
